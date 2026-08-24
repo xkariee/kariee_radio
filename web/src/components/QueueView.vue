@@ -13,7 +13,12 @@ import Cover from './Cover.vue'
     <div v-if="store.currentSong.value" class="now-block">
       <span class="section-label">Now Playing</span>
       <div class="now-row" :class="{ live: store.state.isPlaying }">
-        <Cover :src="store.currentSong.value.thumbnail ?? null" :hue="store.currentSong.value.hue" :size="44" :radius="8" />
+        <button class="cover-play-btn" :title="store.state.isPlaying ? 'Pause' : 'Play'" @click="store.togglePlay()">
+          <Cover :src="store.currentSong.value.thumbnail ?? null" :hue="store.currentSong.value.hue" :size="44" :radius="8" />
+          <span class="cover-play-overlay">
+            <Icon :name="store.state.isPlaying ? 'pause' : 'play'" :size="16" />
+          </span>
+        </button>
         <div class="meta">
           <span class="title">{{ store.currentSong.value.title }}</span>
           <span class="artist">{{ store.currentSong.value.artist }}</span>
@@ -96,6 +101,30 @@ import Cover from './Cover.vue'
   background: var(--teal-wash);
   border-color: var(--teal-line);
   box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.06);
+}
+
+.cover-play-btn {
+  position: relative;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 8px;
+}
+
+.cover-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(6, 8, 11, 0.55);
+  color: var(--text-h);
+  opacity: 0;
+  transition: opacity 0.12s var(--ease);
+}
+
+.now-row:hover .cover-play-overlay {
+  opacity: 1;
 }
 
 .badge {

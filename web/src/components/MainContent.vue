@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { store } from '../store'
+import { colorForId } from '../utils/avatar'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 import TrackRow from './TrackRow.vue'
@@ -16,9 +17,10 @@ const tracks = computed(() =>
 const collaborators = computed(() => {
   const pl = store.activePlaylist.value
   if (!pl) return []
-  return [pl.ownerId, ...pl.collaboratorIds]
-    .map((id) => store.state.users.find((u) => u.id === id))
-    .filter((u): u is NonNullable<typeof u> => !!u)
+  return [
+    { identifier: pl.ownerIdentifier, name: pl.ownerName },
+    ...pl.collaborators,
+  ].map((c) => ({ ...c, color: colorForId(c.identifier) }))
 })
 
 function playAll() {
@@ -48,7 +50,7 @@ function playAll() {
             <div class="collab-stack" v-if="collaborators.length">
               <span
                 v-for="c in collaborators"
-                :key="c.id"
+                :key="c.identifier"
                 class="collab-dot"
                 :style="{ background: c.color }"
                 :title="c.name"

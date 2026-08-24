@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import TopBar from './components/TopBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import MainContent from './components/MainContent.vue'
@@ -12,19 +12,23 @@ import DeleteConfirmModal from './components/modals/DeleteConfirmModal.vue'
 import Icon from './components/Icon.vue'
 import { store } from './store'
 
-// `visible` mirrors what a real NUI focus toggle (F-key bind -> SetNuiFocus)
-// would drive; wired here to a close button + reopen tab for the browser demo.
-const visible = ref(true)
+// `state.visible` mirrors the real NUI focus toggle - hidden until the client sends `open`
+// (via /radio, /createdj or /radiocar), driven entirely by client/main.lua in the FiveM build.
+// In the plain-browser dev fallback it just starts visible with a close/reopen tab.
+onMounted(() => store.bindNui())
 
-onMounted(() => store.initYoutubePlayer('yt-player-host'))
+function close() {
+  if (store.isNuiEnv) store.close()
+  else store.state.visible = false
+}
 </script>
 
 <template>
   <div class="stage">
     <Transition name="pop" appear>
-      <div v-if="visible" class="panel">
+      <div v-if="store.state.visible" class="panel">
         <div class="panel-glow" />
-        <TopBar @close="visible = false" />
+        <TopBar @close="close" />
         <div class="panel-body">
           <Sidebar />
           <MainContent />
@@ -32,7 +36,7 @@ onMounted(() => store.initYoutubePlayer('yt-player-host'))
         <PlayerBar />
       </div>
 
-      <button v-else class="reopen-tab" @click="visible = true">
+      <button v-else-if="!store.isNuiEnv" class="reopen-tab" @click="store.state.visible = true">
         <Icon name="disc" :size="15" />
         Open Radio
       </button>
@@ -43,9 +47,6 @@ onMounted(() => store.initYoutubePlayer('yt-player-host'))
     <EditPlaylistModal v-if="store.state.editPlaylistId" />
     <InviteModal v-if="store.state.inviteePlaylistId" />
     <DeleteConfirmModal v-if="store.state.deletePlaylistId" />
-
-    <!-- hidden host for the YouTube IFrame player that powers real playback -->
-    <div id="yt-player-host" class="yt-host" />
   </div>
 </template>
 
@@ -116,14 +117,5 @@ onMounted(() => store.initYoutubePlayer('yt-player-host'))
   border-color: var(--teal-line);
   color: var(--teal);
   transform: translateY(-1px);
-}
-
-.yt-host {
-  position: fixed;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
 }
 </style>

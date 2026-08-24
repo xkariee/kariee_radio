@@ -45,7 +45,7 @@ function playNext() {
   if (song.value) store.playNext(song.value)
   store.closeMenu()
 }
-function toggleInPlaylist(playlistId: string) {
+function toggleInPlaylist(playlistId: string | number) {
   if (song.value) store.toggleSongInPlaylist(playlistId, song.value.id)
 }
 function removeFromThisPlaylist() {

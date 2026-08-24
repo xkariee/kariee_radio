@@ -1,30 +1,24 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { store } from '../../store'
+import { colorForId } from '../../utils/avatar'
 import Modal from '../Modal.vue'
 import Icon from '../Icon.vue'
 
 const playlist = computed(() =>
-  store.state.inviteePlaylistId ? store.playlistById(store.state.inviteePlaylistId) : null,
+  store.state.inviteePlaylistId != null ? store.playlistById(store.state.inviteePlaylistId) : null,
 )
 
 const query = ref('')
 
-const owner = computed(() => (playlist.value ? store.state.users.find((u) => u.id === playlist.value!.ownerId) : null))
-
-const members = computed(() =>
-  (playlist.value?.collaboratorIds ?? [])
-    .map((id) => store.state.users.find((u) => u.id === id))
-    .filter((u): u is NonNullable<typeof u> => !!u),
-)
+watch(query, (q) => store.searchCandidates(q))
+store.searchCandidates('')
 
 const candidates = computed(() => {
   const pl = playlist.value
   if (!pl) return []
-  const q = query.value.trim().toLowerCase()
-  return store.state.users.filter(
-    (u) => u.id !== pl.ownerId && !pl.collaboratorIds.includes(u.id) && (!q || u.name.toLowerCase().includes(q)),
-  )
+  const memberIdentifiers = new Set(pl.collaborators.map((c) => c.identifier))
+  return store.state.candidates.filter((c) => !memberIdentifiers.has(String(c.id)))
 })
 
 function close() {
@@ -32,31 +26,31 @@ function close() {
   query.value = ''
 }
 
-function invite(userId: string) {
-  if (playlist.value) store.inviteUser(playlist.value.id, userId)
+function invite(targetId: number) {
+  if (playlist.value) store.inviteUser(playlist.value.id, targetId)
 }
 
-function remove(userId: string) {
-  if (playlist.value) store.removeCollaborator(playlist.value.id, userId)
+function remove(identifier: string) {
+  if (playlist.value) store.removeCollaborator(playlist.value.id, identifier)
 }
 </script>
 
 <template>
   <Modal v-if="playlist" :title="`Invite to “${playlist.name}”`" :width="360" @close="close">
     <div class="invite-body">
-      <input v-model="query" type="text" class="text-input" placeholder="Search people..." />
+      <input v-model="query" type="text" class="text-input" placeholder="Search online players..." />
 
       <div class="section">
         <span class="section-label">Members</span>
-        <div class="member-row" v-if="owner">
-          <span class="avatar" :style="{ background: owner.color }">{{ owner.name[0] }}</span>
-          <span class="name">{{ owner.name }}</span>
+        <div class="member-row">
+          <span class="avatar" :style="{ background: colorForId(playlist.ownerIdentifier) }">{{ playlist.ownerName[0] }}</span>
+          <span class="name">{{ playlist.ownerName }}</span>
           <span class="role">Owner</span>
         </div>
-        <div class="member-row" v-for="u in members" :key="u.id">
-          <span class="avatar" :style="{ background: u.color }">{{ u.name[0] }}</span>
-          <span class="name">{{ u.name }}</span>
-          <button class="btn-icon ghost" title="Remove" @click="remove(u.id)">
+        <div class="member-row" v-for="c in playlist.collaborators" :key="c.identifier">
+          <span class="avatar" :style="{ background: colorForId(c.identifier) }">{{ c.name[0] }}</span>
+          <span class="name">{{ c.name }}</span>
+          <button class="btn-icon ghost" title="Remove" @click="remove(c.identifier)">
             <Icon name="x" :size="14" />
           </button>
         </div>
@@ -64,15 +58,15 @@ function remove(userId: string) {
 
       <div class="section" v-if="candidates.length">
         <span class="section-label">Add people</span>
-        <div class="member-row" v-for="u in candidates" :key="u.id">
-          <span class="avatar" :style="{ background: u.color }">{{ u.name[0] }}</span>
-          <span class="name">{{ u.name }}</span>
-          <button class="btn-secondary sm" @click="invite(u.id)">
+        <div class="member-row" v-for="c in candidates" :key="c.id">
+          <span class="avatar" :style="{ background: colorForId(String(c.id)) }">{{ c.name[0] }}</span>
+          <span class="name">{{ c.name }}</span>
+          <button class="btn-secondary sm" @click="invite(c.id)">
             <Icon name="user-plus" :size="12" /> Add
           </button>
         </div>
       </div>
-      <p v-else-if="query" class="empty-hint">No one found matching "{{ query }}".</p>
+      <p v-else-if="query" class="empty-hint">No one online matching "{{ query }}".</p>
     </div>
   </Modal>
 </template>

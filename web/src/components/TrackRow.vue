@@ -8,7 +8,7 @@ const props = defineProps<{
   song: Song
   index: number
   context: Song[]
-  contextPlaylistId?: string
+  contextPlaylistId?: string | number
 }>()
 
 const isCurrent = () => store.currentSong.value?.id === props.song.id
@@ -42,7 +42,16 @@ function openMenu(e: MouseEvent) {
         <Icon :name="isCurrent() && store.state.isPlaying ? 'pause' : 'play'" :size="13" />
       </button>
     </div>
-    <Cover :src="song.thumbnail ?? null" :hue="song.hue" :size="34" :radius="6" />
+    <button
+      class="cover-play-btn"
+      :title="isCurrent() && store.state.isPlaying ? 'Pause' : 'Play'"
+      @click="handlePlayClick"
+    >
+      <Cover :src="song.thumbnail ?? null" :hue="song.hue" :size="34" :radius="6" />
+      <span class="cover-play-overlay">
+        <Icon :name="isCurrent() && store.state.isPlaying ? 'pause' : 'play'" :size="14" />
+      </span>
+    </button>
     <div class="meta">
       <span class="title">{{ song.title }}</span>
       <span class="artist">{{ song.artist }}</span>
@@ -104,6 +113,7 @@ function openMenu(e: MouseEvent) {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   transition: opacity 0.1s var(--ease);
+  pointer-events: none;
 }
 
 .track-row.current .idx,
@@ -119,6 +129,7 @@ function openMenu(e: MouseEvent) {
   height: 13px;
   opacity: 0;
   transition: opacity 0.1s var(--ease);
+  pointer-events: none;
 }
 
 .track-row.current .eq-bars {
@@ -170,6 +181,31 @@ function openMenu(e: MouseEvent) {
 }
 
 .track-row:hover .play-hover {
+  opacity: 1;
+}
+
+.cover-play-btn {
+  position: relative;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 6px;
+}
+
+.cover-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(6, 8, 11, 0.55);
+  color: var(--text-h);
+  opacity: 0;
+  transition: opacity 0.12s var(--ease);
+}
+
+.track-row:hover .cover-play-overlay,
+.track-row.current .cover-play-overlay {
   opacity: 1;
 }
 

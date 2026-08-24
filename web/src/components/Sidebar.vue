@@ -8,7 +8,7 @@ const sortedPlaylists = computed(() =>
   [...store.state.playlists].sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0)),
 )
 
-function openPlaylistMenu(e: MouseEvent, playlistId: string) {
+function openPlaylistMenu(e: MouseEvent, playlistId: string | number) {
   e.stopPropagation()
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
   store.openPlaylistMenu(playlistId, rect.right, rect.top)
@@ -36,6 +36,27 @@ function openPlaylistMenu(e: MouseEvent, playlistId: string) {
         <span v-if="store.upNext.value.length" class="count">{{ store.upNext.value.length }}</span>
       </button>
     </nav>
+
+    <div class="invites-head" v-if="store.state.invites.length">
+      <span>Invited</span>
+    </div>
+    <div class="invite-list" v-if="store.state.invites.length">
+      <div class="invite-row" v-for="inv in store.state.invites" :key="inv.playlistId">
+        <Cover :src="null" :hue="inv.hue" :size="30" :radius="6" icon="disc" />
+        <div class="invite-meta">
+          <span class="invite-name">{{ inv.name }}</span>
+          <span class="invite-sub">from {{ inv.invitedByName }}</span>
+        </div>
+        <div class="invite-actions">
+          <button class="btn-icon ghost" title="Accept" @click="store.acceptInvite(inv.playlistId)">
+            <Icon name="check" :size="13" />
+          </button>
+          <button class="btn-icon ghost" title="Decline" @click="store.declineInvite(inv.playlistId)">
+            <Icon name="x" :size="13" />
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div class="playlists-head">
       <span>Your Playlists</span>
@@ -140,6 +161,63 @@ function openPlaylistMenu(e: MouseEvent, playlistId: string) {
 
 .nav-item.active .count {
   color: var(--teal);
+}
+
+.invites-head {
+  padding: 0 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.invite-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 14px;
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.invite-row:hover {
+  background: var(--surface-2);
+}
+
+.invite-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.invite-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invite-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.invite-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .playlists-head {

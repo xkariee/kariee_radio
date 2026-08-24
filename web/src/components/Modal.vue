@@ -27,7 +27,7 @@ const emit = defineEmits<{ close: [] }>()
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(6, 8, 11, 0.65);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
