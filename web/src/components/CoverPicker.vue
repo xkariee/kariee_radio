@@ -7,11 +7,11 @@ const props = defineProps<{ modelValue: string | null; hue: number }>()
 const emit = defineEmits<{ 'update:modelValue': [string | null] }>()
 
 const urlDraft = ref('')
-const fileInput = ref<HTMLInputElement | null>(null)
+// const fileInput = ref<HTMLInputElement | null>(null)
 
-function pickFile() {
-  fileInput.value?.click()
-}
+// function pickFile() {
+//   fileInput.value?.click()
+// }
 
 function onFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
@@ -28,23 +28,23 @@ function applyUrl() {
   }
 }
 
-function remove() {
-  emit('update:modelValue', null)
-}
+// function remove() {
+//   emit('update:modelValue', null)
+// }
 </script>
 
 <template>
   <div class="cover-picker">
     <Cover :src="modelValue" :hue="hue" :size="72" :radius="10" icon="disc" />
     <div class="picker-actions">
-      <div class="row">
-        <button type="button" class="btn-secondary sm" @click="pickFile">
+      <!-- <div class="row"> -->
+        <!-- <button type="button" class="btn-secondary sm" @click="pickFile">
           <Icon name="upload" :size="13" /> Upload
-        </button>
-        <button v-if="modelValue" type="button" class="btn-secondary sm" @click="remove">
+        </button> -->
+        <!-- <button v-if="modelValue" type="button" class="btn-secondary sm" @click="remove">
           <Icon name="x" :size="13" /> Remove
-        </button>
-      </div>
+        </button> -->
+      <!-- </div> -->
       <div class="row">
         <input
           v-model="urlDraft"

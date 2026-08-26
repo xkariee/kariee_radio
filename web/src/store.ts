@@ -71,6 +71,10 @@ const state = reactive<State>({
 })
 
 let myBroadcastId: string | null = isNuiEnv ? null : 'radio:dev'
+// DJ stations and car radios are collaborative (shared, server-side queue); personal radio keeps
+// its queue purely local. This tracks which kind the currently-open NUI session is bound to.
+let myContextKind: 'radio' | 'dj' | 'radiocar' | null = isNuiEnv ? null : 'radio'
+const isShared = () => myContextKind === 'dj' || myContextKind === 'radiocar'
 
 let qidSeq = 1000
 const nextQid = () => `q${qidSeq++}`
@@ -180,6 +184,15 @@ function syncCurrentPlayback() {
 }
 
 function playSong(song: Song, context?: Song[]) {
+  if (isShared()) {
+    const list = context && context.length ? context : [song]
+    const idx = list.findIndex((s) => s.id === song.id)
+    const rest = idx >= 0 ? list.slice(idx + 1) : []
+    recordRecentlyPlayed(song.id)
+    fetchNui('play', { song, volume: state.muted ? 0 : state.volume, queue: rest })
+    return
+  }
+
   const list = context && context.length ? context : [song]
   state.queue = list.map((s) => ({ qid: nextQid(), songId: s.id }))
   state.queueCursor = Math.max(
@@ -208,6 +221,10 @@ function advance() {
 }
 
 function next() {
+  if (isShared()) {
+    fetchNui('next', {})
+    return
+  }
   advance()
 }
 
@@ -244,16 +261,31 @@ function toggleMute() {
 }
 
 function addToQueue(song: Song) {
+  if (isShared()) {
+    fetchNui('enqueue', { song })
+    return
+  }
   state.queue.push({ qid: nextQid(), songId: song.id })
 }
 
 function playNext(song: Song) {
+  if (isShared()) {
+    fetchNui('enqueueNext', { song })
+    return
+  }
   state.queue.splice(state.queueCursor + 1, 0, { qid: nextQid(), songId: song.id })
 }
 
 function removeFromQueue(qid: string) {
   const idx = state.queue.findIndex((e) => e.qid === qid)
   if (idx === -1) return
+
+  if (isShared()) {
+    if (idx === 0) return // index 0 is the currently-playing song, not a removable queue entry
+    fetchNui('removeFromQueue', { index: idx - 1 })
+    return
+  }
+
   if (idx < state.queueCursor) state.queueCursor -= 1
   state.queue.splice(idx, 1)
 }
@@ -474,7 +506,16 @@ async function hydrate() {
   if (data.broadcast) {
     const song = songFromBroadcast(data.broadcast.song)
     upsertSong(song)
-    state.queue = [{ qid: nextQid(), songId: song.id }]
+    if (isShared()) {
+      const queueSongs = (data.broadcast.queue || []).map(songFromBroadcast)
+      for (const s of queueSongs) upsertSong(s)
+      state.queue = [
+        { qid: 'current', songId: song.id },
+        ...queueSongs.map((s: Song, i: number) => ({ qid: `q${i}`, songId: s.id })),
+      ]
+    } else {
+      state.queue = [{ qid: nextQid(), songId: song.id }]
+    }
     state.queueCursor = 0
     state.progress = data.broadcast.progress || 0
     state.isPlaying = !!data.broadcast.playing
@@ -519,6 +560,18 @@ function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
     if (id === myBroadcastId) {
       state.isPlaying = b.playing
       state.progress = b.progress || 0
+
+      if (isShared()) {
+        const current = songFromBroadcast(b.song)
+        upsertSong(current)
+        const queueSongs = (b.queue || []).map(songFromBroadcast)
+        for (const s of queueSongs) upsertSong(s)
+        state.queue = [
+          { qid: 'current', songId: current.id },
+          ...queueSongs.map((s: Song, i: number) => ({ qid: `q${i}`, songId: s.id })),
+        ]
+        state.queueCursor = 0
+      }
     }
   }
 }
@@ -529,7 +582,14 @@ function bindNui() {
   onNuiMessage('open', (data) => {
     state.visible = true
     myBroadcastId = data.context?.id ?? null
-    if (myBroadcastId) audioEngine.onEnded(myBroadcastId, () => advance())
+    myContextKind = data.context?.kind ?? null
+    // Shared broadcasts (dj/radiocar) advance server-side only - every viewer's own "song ended"
+    // firing a local advance would race and skip multiple tracks at once.
+    if (myBroadcastId) {
+      audioEngine.onEnded(myBroadcastId, () => {
+        if (myContextKind === 'radio') advance()
+      })
+    }
     hydrate()
   })
 

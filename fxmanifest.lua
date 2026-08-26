@@ -14,8 +14,7 @@ shared_scripts {
 client_scripts {
     'client/main.lua',
     'client/broadcast.lua',
-    'client/dj.lua',
-    'client/radiocar.lua'
+    'client/dj.lua'
 }
 
 server_scripts {

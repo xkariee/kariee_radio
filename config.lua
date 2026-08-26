@@ -2,7 +2,8 @@ Config = {}
 
 -- ─── General ────────────────────────────────────────────────────────────────
 
--- Key that opens/closes the radio NUI (RegisterKeyMapping, rebindable in FiveM settings)
+-- Key that opens/closes the radio NUI (RegisterKeyMapping, rebindable in FiveM settings).
+-- Opens your personal radio, or the car radio if you're currently in a vehicle.
 Config.OpenKey = 'F6'
 
 -- Max distance (metres) any broadcast (personal radio, DJ station, car radio) can be heard at.
@@ -23,9 +24,26 @@ Config.MuffleVolumeFactor = 0.28
 
 Config.MaxRecentlyPlayed = 30
 
+-- ─── Personal radio (F6, out of a vehicle) ──────────────────────────────────
+
+-- Spawns Config.BackModel on the player's back for as long as their personal radio is playing,
+-- deletes it the moment it's paused/stopped. Set to false to disable entirely.
+Config.ShowBackProp = true
+Config.BackModel = `sm_prop_smug_radio_01`
+
+-- Attachment bone + offset/rotation for the back prop. Tune these to fit BackModel.
+Config.BackPropBone = 24818 -- SKEL_Spine2, the usual "on the back" bone
+Config.BackPropOffset = { x = 0.02, y = -0.15, z = -0.1 }
+Config.BackPropRotation = { x = 0.0, y = 45.0, z = 0.0 }
+
 -- ─── DJ mixer (/createdj) ───────────────────────────────────────────────────
 
-Config.DjMixerModel = `h4_prop_battle_dj_mixer_01c`
+Config.DjMixerModel = `prop_dj_deck_02`
+
+-- Max range (metres) for a DJ station placed outdoors (not inside any interior) - an open-air
+-- rig should carry much further than Config.MaxRange. Indoor stations still use Config.MaxRange
+-- once you leave their interior (they fill the room itself regardless of distance).
+Config.DjOutdoorRange = 150.0
 
 -- ACE permission required to use /createdj and /removedj. Set to false to allow everyone.
 Config.DjPermission = 'group.admin'
@@ -39,7 +57,7 @@ Config.Placement = {
     targetDistance = 2.0, -- ox_target interaction range on the spawned DJ mixer prop
 }
 
--- ─── Car radio (/radiocar) ──────────────────────────────────────────────────
+-- ─── Car radio (F6, while in a vehicle) ─────────────────────────────────────
 
 -- Ratio (0-1) above which a door is considered "open" for the purposes of muffling.
 Config.DoorOpenThreshold = 0.08
@@ -55,6 +73,5 @@ Config.Messages = {
     radio_forbidden_interior = 'Radio in this interior is forbidden.',
     dj_interior_occupied = 'There is already a DJ console in this interior.',
     station_removed = 'DJ station removed.',
-    not_in_vehicle = 'You need to be in a vehicle to use /radiocar.',
-    not_driver = 'Only the driver can start the car radio.',
+    not_ready = 'Still connecting, try again in a moment.',
 }

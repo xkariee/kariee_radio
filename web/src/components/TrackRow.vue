@@ -34,13 +34,6 @@ function openMenu(e: MouseEvent) {
     <div class="idx-cell">
       <span class="idx">{{ index + 1 }}</span>
       <span class="eq-bars"><span /><span /><span /></span>
-      <button
-        class="play-hover"
-        :title="isCurrent() && store.state.isPlaying ? 'Pause' : 'Play'"
-        @click="handlePlayClick"
-      >
-        <Icon :name="isCurrent() && store.state.isPlaying ? 'pause' : 'play'" :size="13" />
-      </button>
     </div>
     <button
       class="cover-play-btn"
