@@ -1,0 +1,8 @@
+
+
+done:
+Sprawdzic czy dziala z 2-gą osobą
+Wyjebać drugi (play / pause) button po lewej od obrazka
+Wyjebac importowanie wlasnego zdjecia do playlist i zostawic tylko url
+Radio w aucie powinno byc przypisane do rejestracji i jak auto "zniknie" (zostanie schowane albo cos) to zatrzymac piosenke
+Zmienić prop djki
