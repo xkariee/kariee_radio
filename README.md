@@ -6,3 +6,6 @@ YouTube Data API v3 key used for in-app music search.
  1. Go to https://console.cloud.google.com/apis/credentials
  2. Create a project (or pick one), enable the "YouTube Data API v3"
  3. Create an API key and restrict it to that API
+
+
+![Preview](https://github.com/xkariee/kariee_radio/blob/main/preview.png)
