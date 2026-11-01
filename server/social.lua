@@ -62,5 +62,7 @@ lib.callback.register('kariee_radio:getState', function(source, context)
         recent = GetRecentForPlayer(identifier),
         invites = GetInvitesForPlayer(identifier),
         broadcast = GetBroadcastSnapshotFor(context),
+        isAdmin = IsRadioAdmin(source),
+        ban = SerializeRadioBan(GetRadioBan(source)),
     }
 end)

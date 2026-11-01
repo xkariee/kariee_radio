@@ -88,3 +88,19 @@ CREATE TABLE IF NOT EXISTS `radio_dj_stations` (
   PRIMARY KEY (`id`),
   KEY `idx_owner` (`owner_identifier`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Radio bans managed from the admin panel (/radioadmin). The resource also creates this table on
+-- start if it's missing. scope: 'dj' = DJ booths only, 'all' = every radio. expires_at is a unix
+-- timestamp, NULL = permanent.
+CREATE TABLE IF NOT EXISTS `radio_bans` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `identifier` VARCHAR(64) NOT NULL,
+  `name` VARCHAR(100) NOT NULL DEFAULT '',
+  `scope` ENUM('dj', 'all') NOT NULL DEFAULT 'dj',
+  `reason` VARCHAR(255) NOT NULL DEFAULT '',
+  `banned_by` VARCHAR(100) NOT NULL DEFAULT '',
+  `expires_at` INT UNSIGNED NULL DEFAULT NULL,
+  `created_at` INT UNSIGNED NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_identifier` (`identifier`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

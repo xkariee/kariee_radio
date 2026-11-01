@@ -6,7 +6,7 @@ import CoverPicker from '../CoverPicker.vue'
 import Icon from '../Icon.vue'
 
 const playlist = computed(() =>
-  store.state.editPlaylistId ? store.playlistById(store.state.editPlaylistId) : null,
+  store.state.editPlaylistId != null ? store.playlistById(store.state.editPlaylistId) : null,
 )
 
 const name = ref('')
@@ -28,38 +28,33 @@ function close() {
 }
 
 function save() {
-  if (!playlist.value) return
+  if (!playlist.value || !name.value.trim()) return
   store.renamePlaylist(playlist.value.id, name.value)
   store.setPlaylistCover(playlist.value.id, cover.value)
+  store.toast('Playlist updated', 'check')
   close()
 }
 
 function remove() {
-  if (!playlist.value) return
-  store.requestDeletePlaylist(playlist.value.id)
+  if (playlist.value) store.requestDeletePlaylist(playlist.value.id)
 }
 </script>
 
 <template>
-  <Modal v-if="playlist" title="Edit Playlist" @close="close">
-    <form class="form" @submit.prevent="save">
-      <label class="field">
-        <span>Name</span>
-        <input v-model="name" type="text" class="text-input" maxlength="60" autofocus />
-      </label>
-      <label class="field">
-        <span>Cover</span>
-        <CoverPicker v-model="cover" :hue="playlist.hue" />
-      </label>
-      <div class="form-actions">
-        <button type="button" class="btn-danger" @click="remove">
-          <Icon name="trash-2" :size="13" /> Delete
-        </button>
-        <div class="spacer" />
-        <button type="button" class="btn-secondary" @click="close">Cancel</button>
-        <button type="submit" class="btn-primary" :disabled="!name.trim()">Save Changes</button>
+  <Modal v-if="playlist" title="Edit details" :subtitle="playlist.name" icon="edit-2" @close="close">
+    <form id="edit-pl" class="form" @submit.prevent="save">
+      <div class="field">
+        <label for="edit-name">Name</label>
+        <input id="edit-name" v-model="name" type="text" class="text-input" maxlength="60" required autofocus />
       </div>
+      <CoverPicker v-model="cover" :hue="playlist.hue" />
     </form>
+    <template #footer>
+      <button type="button" class="btn btn-danger sm" @click="remove"><Icon name="trash-2" :size="14" /> Delete</button>
+      <span class="spacer" />
+      <button type="button" class="btn btn-quiet" @click="close">Cancel</button>
+      <button type="submit" form="edit-pl" class="btn btn-primary" :disabled="!name.trim()">Save</button>
+    </template>
   </Modal>
 </template>
 
@@ -67,26 +62,19 @@ function remove() {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 2rem;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.6rem;
 }
 
-.field > span {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-faint);
-}
-
-.form-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+.field label {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-dim);
 }
 
 .spacer {

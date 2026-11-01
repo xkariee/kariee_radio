@@ -1,239 +1,91 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { store } from '../store'
-import { colorForId } from '../utils/avatar'
+import { relativeTime } from '../utils/format'
 import Icon from './Icon.vue'
-import Cover from './Cover.vue'
-import TrackRow from './TrackRow.vue'
-import QueueView from './QueueView.vue'
-import SearchResultsView from './SearchResultsView.vue'
+import HomeView from './views/HomeView.vue'
+import SearchView from './views/SearchView.vue'
+import QueueView from './views/QueueView.vue'
+import CollectionView from './views/CollectionView.vue'
+import AdminView from './views/AdminView.vue'
 
-const isSearching = computed(() => store.state.searchQuery.trim().length > 0)
+const { state } = store
+const scroller = ref<HTMLElement | null>(null)
 
-const tracks = computed(() =>
-  store.state.view === 'playlist' ? store.activePlaylistSongs.value : store.recentlyPlayed.value,
+watch(
+  () => [state.view, state.activePlaylistId],
+  () => scroller.value?.scrollTo({ top: 0 }),
 )
 
-const collaborators = computed(() => {
-  const pl = store.activePlaylist.value
-  if (!pl) return []
-  return [
-    { identifier: pl.ownerIdentifier, name: pl.ownerName },
-    ...pl.collaborators,
-  ].map((c) => ({ ...c, color: colorForId(c.identifier) }))
-})
-
-function playAll() {
-  if (tracks.value.length) store.playSong(tracks.value[0], tracks.value)
-}
+const ban = store.activeBan
+const banUntil = computed(() =>
+  ban.value?.expires_at ? `Ends ${relativeTime(ban.value.expires_at, state.now)}` : 'Permanent',
+)
 </script>
 
 <template>
-  <main class="content">
-    <SearchResultsView v-if="isSearching" />
-    <QueueView v-else-if="store.state.view === 'queue'" />
-
-    <div v-else class="view">
-      <div v-if="store.state.view === 'playlist' && store.activePlaylist.value" class="playlist-header">
-        <Cover
-          :src="store.activePlaylist.value.cover"
-          :hue="store.activePlaylist.value.hue"
-          :size="112"
-          :radius="12"
-          :icon="store.activePlaylist.value.isDefault ? 'heart' : 'disc'"
-        />
-        <div class="playlist-info">
-          <span class="kicker">{{ store.activePlaylist.value.isDefault ? 'Default Playlist' : 'Playlist' }}</span>
-          <h1>{{ store.activePlaylist.value.name }}</h1>
-          <div class="playlist-sub">
-            <span>{{ tracks.length }} song{{ tracks.length === 1 ? '' : 's' }}</span>
-            <div class="collab-stack" v-if="collaborators.length">
-              <span
-                v-for="c in collaborators"
-                :key="c.identifier"
-                class="collab-dot"
-                :style="{ background: c.color }"
-                :title="c.name"
-              >{{ c.name[0] }}</span>
-            </div>
-          </div>
-          <div class="playlist-actions">
-            <button class="btn-primary" @click="playAll" :disabled="!tracks.length">
-              <Icon name="play" :size="14" />
-              Play
-            </button>
-            <template v-if="!store.activePlaylist.value.isDefault">
-              <button class="btn-secondary" @click="store.state.inviteePlaylistId = store.activePlaylist.value!.id">
-                <Icon name="user-plus" :size="14" />
-                Invite
-              </button>
-              <button class="btn-secondary" @click="store.state.editPlaylistId = store.activePlaylist.value!.id">
-                <Icon name="edit-2" :size="14" />
-                Edit
-              </button>
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="library-header">
-        <h1>Recently Played</h1>
-        <button class="btn-primary" @click="playAll" :disabled="!tracks.length">
-          <Icon name="play" :size="14" />
-          Play All
-        </button>
-      </div>
-
-      <div class="track-list">
-        <TrackRow
-          v-for="(song, i) in tracks"
-          :key="song.id"
-          :song="song"
-          :index="i"
-          :context="tracks"
-          :context-playlist-id="store.state.view === 'playlist' ? store.state.activePlaylistId ?? undefined : undefined"
-        />
-        <div v-if="!tracks.length" class="empty">
-          <span class="empty-badge">
-            <Icon :name="store.state.view === 'playlist' ? 'music' : 'clock'" :size="24" />
-          </span>
-          <p v-if="store.state.view === 'playlist'">This playlist is empty. Search for songs to add some.</p>
-          <p v-else>Nothing played yet. Search above to find something to play.</p>
-        </div>
-      </div>
+  <div ref="scroller" class="content">
+    <div v-if="ban" class="ban-banner" role="alert">
+      <span class="ban-icon" aria-hidden="true"><Icon name="ban" :size="18" /></span>
+      <span class="ban-text">
+        <b>{{ ban.scope === 'all' ? 'You’re banned from using the radio' : 'You’re banned from DJ booths' }}</b>
+        <span>{{ ban.reason || 'No reason given' }} · {{ banUntil }}</span>
+      </span>
     </div>
-  </main>
+
+    <Transition name="view" mode="out-in">
+      <HomeView v-if="state.view === 'home'" key="home" />
+      <SearchView v-else-if="state.view === 'search'" key="search" />
+      <QueueView v-else-if="state.view === 'queue'" key="queue" />
+      <AdminView v-else-if="state.view === 'admin' && state.isAdmin" key="admin" />
+      <CollectionView v-else :key="`${state.view}:${state.activePlaylistId}`" />
+    </Transition>
+  </div>
 </template>
 
 <style scoped>
 .content {
+  position: relative;
+  z-index: 1;
   flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+  min-height: 0;
   overflow-y: auto;
-  padding: 20px 22px 12px;
+  overflow-x: hidden;
+  padding: 0.6rem 2.6rem 2.8rem;
 }
 
-.view {
-  display: flex;
-  flex-direction: column;
-}
-
-.library-header {
+.ban-banner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
+  gap: 1.2rem;
+  margin: 0.8rem 0 0.4rem;
+  padding: 1.2rem 1.4rem;
+  border-radius: var(--r-lg);
+  background: var(--danger-soft);
+  border: 0.1rem solid rgba(255, 123, 123, 0.35);
 }
 
-.library-header h1 {
-  font-size: 19px;
-  font-weight: 600;
-  color: var(--text-h);
-  margin: 0;
-}
-
-.playlist-header {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 18px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
-}
-
-.playlist-info {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 0;
-}
-
-.kicker {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--teal);
-}
-
-.playlist-info h1 {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--text-h);
-  margin: 0;
-  line-height: 1.15;
-}
-
-.playlist-sub {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12.5px;
-  color: var(--text-faint);
-}
-
-.collab-stack {
-  display: flex;
-}
-
-.collab-dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
+.ban-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(0, 0, 0, 0.55);
-  border: 2px solid var(--surface-1);
-  margin-left: -6px;
-  transition: transform 0.12s var(--ease);
-}
-
-.collab-dot:hover {
-  transform: translateY(-2px) scale(1.08);
-}
-
-.collab-stack .collab-dot:first-child {
-  margin-left: 0;
-}
-
-.playlist-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-bottom: 12px;
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  color: var(--text-faint);
-  padding: 48px 0;
-  font-size: 13px;
-  text-align: center;
-}
-
-.empty-badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
+  width: 3.6rem;
+  height: 3.6rem;
   border-radius: 50%;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  color: var(--text-faint);
+  background: rgba(255, 123, 123, 0.18);
+  color: var(--danger);
+  flex-shrink: 0;
+}
+
+.ban-text {
+  display: flex;
+  flex-direction: column;
+  font-size: 1.25rem;
+  color: var(--text-dim);
+}
+
+.ban-text b {
+  font-size: 1.4rem;
+  color: var(--text-h);
 }
 </style>

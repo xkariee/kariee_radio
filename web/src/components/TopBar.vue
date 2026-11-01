@@ -1,124 +1,244 @@
 <script setup lang="ts">
+import { computed, nextTick, ref, watch } from 'vue'
 import { store } from '../store'
 import Icon from './Icon.vue'
 
 const emit = defineEmits<{ close: [] }>()
+const { state } = store
+
+const input = ref<HTMLInputElement | null>(null)
+
+watch(
+  () => state.focusSearchSignal,
+  async () => {
+    await nextTick()
+    input.value?.focus()
+    input.value?.select()
+  },
+)
+
+function onFocus() {
+  if (state.view !== 'search') store.setView('search')
+}
+
+function onEsc() {
+  if (state.searchQuery) state.searchQuery = ''
+  else input.value?.blur()
+}
+
+const context = computed(() => {
+  switch (state.contextKind) {
+    case 'radiocar':
+      return { icon: 'car', label: 'Car radio', help: 'Everyone in this vehicle can control playback and the queue.' }
+    case 'dj':
+      return { icon: 'speaker', label: 'DJ booth', help: 'Anyone at the booth can control playback and add to the queue.' }
+    case 'radio':
+      return { icon: 'radio', label: 'Personal radio', help: 'Only you control this radio. Players nearby can hear it.' }
+    default:
+      return null
+  }
+})
 </script>
 
 <template>
   <header class="topbar">
-    <div class="brand">
-      <span class="brand-badge"><Icon name="disc" :size="16" /></span>
-      <span>AX <b>Radio</b></span>
+    <div class="history">
+      <button class="icon-btn" aria-label="Go back" title="Back" :disabled="state.historyIndex <= 0" @click="store.goBack">
+        <Icon name="chevron-left" :size="20" />
+      </button>
+      <button
+        class="icon-btn"
+        aria-label="Go forward"
+        title="Forward"
+        :disabled="state.historyIndex >= state.history.length - 1"
+        @click="store.goForward"
+      >
+        <Icon name="chevron-right" :size="20" />
+      </button>
     </div>
 
-    <div class="search">
-      <Icon name="search" :size="15" />
+    <div class="search" role="search">
+      <Icon name="search" :size="18" />
+      <label class="sr-only" for="radio-search">Search songs and artists, or paste a YouTube link</label>
       <input
-        v-model="store.state.searchQuery"
+        id="radio-search"
+        ref="input"
+        v-model="state.searchQuery"
         type="text"
-        placeholder="Search by song title or artist..."
-        @keydown.esc="store.state.searchQuery = ''"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Search songs, artists or paste a link"
+        @focus="onFocus"
+        @keydown.esc.stop.prevent="onEsc"
       />
-      <Transition name="pop">
-        <button v-if="store.state.searchQuery" class="clear" @click="store.state.searchQuery = ''">
-          <Icon name="x" :size="13" />
+      <Transition name="pop" mode="out-in">
+        <button v-if="state.searchQuery" class="clear" aria-label="Clear search" @click="state.searchQuery = ''; input?.focus()">
+          <Icon name="x" :size="14" />
         </button>
+        <kbd v-else aria-hidden="true">/</kbd>
       </Transition>
     </div>
 
-    <button class="btn-icon close" title="Close" @click="emit('close')">
-      <Icon name="x" :size="16" />
-    </button>
+    <div v-if="context" class="context" :title="context.help">
+      <Icon :name="context.icon" :size="16" />
+      <span class="ctx-label">{{ context.label }}</span>
+      <span v-if="store.shared.value" class="ctx-shared"><i aria-hidden="true" />Shared</span>
+      <span class="sr-only">. {{ context.help }}</span>
+    </div>
+
+    <div class="tools">
+      <button class="icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" @click="state.shortcutsOpen = true">
+        <Icon name="keyboard" :size="19" />
+      </button>
+      <button class="icon-btn" aria-label="Settings" title="Settings" @click="state.settingsOpen = true">
+        <Icon name="settings" :size="19" />
+      </button>
+      <button class="icon-btn close" aria-label="Close radio" title="Close (Esc)" @click="emit('close')">
+        <Icon name="x" :size="20" />
+      </button>
+    </div>
   </header>
 </template>
 
 <style scoped>
 .topbar {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
+  gap: 1.2rem;
+  padding: 1.4rem 1.6rem 1rem;
 }
 
-.brand {
+.history {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
+  gap: 0.4rem;
 }
 
-.brand-badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(155deg, var(--teal-wash), transparent);
-  border: 1px solid var(--teal-line);
-  color: var(--teal);
+.history .icon-btn {
+  background: var(--fill-2);
+  color: var(--text-h);
 }
 
-.brand b {
-  color: var(--teal);
-  font-weight: 700;
+.history .icon-btn:disabled {
+  background: var(--fill-1);
+  opacity: 0.35;
 }
 
 .search {
   flex: 1;
-  max-width: 1000px;
+  max-width: 62rem;
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 8px 14px;
-  color: var(--text-faint);
-  margin-left: 15px;
-  /* margin: 0 auto; */
+  gap: 1rem;
+  height: 4.6rem;
+  padding: 0 0.8rem 0 1.6rem;
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  border: 0.1rem solid var(--line);
+  color: var(--text-dim);
   transition:
-    border-color 0.15s var(--ease),
-    box-shadow 0.15s var(--ease),
-    background-color 0.15s var(--ease);
+    border-color 0.18s var(--ease),
+    background-color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease);
+}
+
+.search:hover {
+  background: var(--fill-3);
 }
 
 .search:focus-within {
-  border-color: var(--teal-line);
-  background: var(--surface-3);
-  box-shadow: 0 0 0 3px var(--teal-wash);
+  background: var(--fill-3);
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 0.4rem var(--accent-soft);
+  color: var(--text-h);
 }
 
 .search input {
   flex: 1;
   min-width: 0;
+  height: 100%;
   background: transparent;
   border: none;
   outline: none;
-  color: var(--text);
-  font-size: 13px;
+  color: var(--text-h);
+  font-size: 1.45rem;
+  font-weight: 500;
 }
 
 .search input::placeholder {
   color: var(--text-faint);
 }
 
+.search kbd {
+  margin-right: 0.6rem;
+}
+
 .clear {
   display: flex;
-  color: var(--text-faint);
-  transition: color 0.15s var(--ease);
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--fill-3);
+  color: var(--text-h);
+  transition: background-color 0.15s var(--ease);
 }
 
 .clear:hover {
-  color: var(--text);
+  background: var(--fill-4);
 }
 
-.close {
+.context {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  height: 3.6rem;
+  padding: 0 1.3rem;
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  border: 0.1rem solid var(--line);
+  color: var(--text-dim);
+  font-size: 1.25rem;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.context svg {
+  color: var(--accent);
+}
+
+.ctx-shared {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: 0.2rem;
+  padding: 0.2rem 0.8rem;
+  border-radius: var(--r-pill);
+  background: rgba(98, 227, 166, 0.12);
+  color: var(--ok);
+  font-size: 1.1rem;
+  font-weight: 750;
+}
+
+.ctx-shared i {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0.3rem rgba(98, 227, 166, 0.2);
+}
+
+.tools {
+  display: flex;
+  gap: 0.2rem;
   margin-left: auto;
+}
+
+.close:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 </style>

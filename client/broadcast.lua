@@ -4,6 +4,9 @@
 
 local broadcasts = {}
 local lastVolume = {}
+-- Whether we're inside each broadcast's hearing area (its interior, or within range), tracked
+-- separately from volume so the nearby now-playing widget also works while it's paused or at 0%.
+local lastNear = {}
 
 -- ─── Back prop while your own /radio is playing ────────────────────────────
 
@@ -118,15 +121,18 @@ CreateThread(function()
         for id, b in pairs(broadcasts) do
             seen[id] = true
             local volume = 0
+            local near = false
 
-            if b.playing then
-                local sourcePos, muffled, bypass, range = resolve(b, myPed, myCoords)
-                if sourcePos then
+            local sourcePos, muffled, bypass, range = resolve(b, myPed, myCoords)
+            if sourcePos then
+                range = range or Config.MaxRange
+                local distance = bypass and 0 or #(myCoords - sourcePos)
+                near = bypass or distance < range
+
+                if b.playing then
                     if bypass then
                         volume = b.volume / 100
                     else
-                        range = range or Config.MaxRange
-                        local distance = #(myCoords - sourcePos)
                         local fade = distance >= range and 0 or (1 - distance / range)
                         local muffle = muffled and Config.MuffleVolumeFactor or 1.0
                         volume = (b.volume / 100) * fade * muffle
@@ -134,16 +140,18 @@ CreateThread(function()
                 end
             end
 
-            if lastVolume[id] == nil or math.abs(lastVolume[id] - volume) > 0.01 then
+            if lastVolume[id] == nil or math.abs(lastVolume[id] - volume) > 0.01 or lastNear[id] ~= near then
                 lastVolume[id] = volume
-                SendNUIMessage({ action = 'volume', id = id, volume = volume })
+                lastNear[id] = near
+                SendNUIMessage({ action = 'volume', id = id, volume = volume, near = near })
             end
         end
 
         for id in pairs(lastVolume) do
             if not seen[id] then
                 lastVolume[id] = nil
-                SendNUIMessage({ action = 'volume', id = id, volume = 0 })
+                lastNear[id] = nil
+                SendNUIMessage({ action = 'volume', id = id, volume = 0, near = false })
             end
         end
     end

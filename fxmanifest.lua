@@ -14,7 +14,8 @@ shared_scripts {
 client_scripts {
     'client/main.lua',
     'client/broadcast.lua',
-    'client/dj.lua'
+    'client/dj.lua',
+    'client/admin.lua'
 }
 
 server_scripts {
@@ -23,7 +24,8 @@ server_scripts {
     'server/playlists.lua',
     'server/social.lua',
     'server/broadcast.lua',
-    'server/dj.lua'
+    'server/dj.lua',
+    'server/admin.lua'
 }
 
 ui_page 'web/dist/index.html'

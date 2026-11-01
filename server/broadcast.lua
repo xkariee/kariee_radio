@@ -21,6 +21,20 @@ local function elapsedSeconds(b)
     if not b.playing then return b.progressAt end
     return b.progressAt + (GetGameTimer() - b.updatedAt) / 1000.0
 end
+BroadcastProgress = elapsedSeconds
+
+---Display name for a broadcast - the booth's label for DJ stations (shown in the nearby
+---now-playing widget and the admin panel).
+---@param b table
+---@return string
+function BroadcastLabel(b)
+    if b.kind == 'dj' then
+        local station = DjStations[b.stationId]
+        return station and station.label or 'DJ booth'
+    end
+    if b.kind == 'radiocar' then return 'Car radio' end
+    return 'Personal radio'
+end
 
 function SyncBroadcasts()
     local payload = {}
@@ -28,6 +42,7 @@ function SyncBroadcasts()
         payload[id] = {
             id = id,
             kind = b.kind,
+            label = BroadcastLabel(b),
             owner = b.owner,
             stationId = b.stationId,
             vehicleNetId = b.vehicleNetId,
@@ -72,6 +87,11 @@ end
 local function canControl(source, id)
     local b = ActiveBroadcasts[id]
     if not b then return false end
+    local ban = GetRadioBan(source, b.kind)
+    if ban then
+        NotifyRadioBan(source, ban)
+        return false
+    end
     if b.kind == 'radio' then return b.owner == source end
     if b.kind == 'dj' then return true end
     if b.kind == 'radiocar' then return isOccupantOf(source, b.vehicleNetId) end
@@ -131,6 +151,12 @@ RegisterNetEvent('kariee_radio:broadcast:play', function(kind, ctxId, song, volu
         return
     end
 
+    local ban = GetRadioBan(source, kind)
+    if ban then
+        NotifyRadioBan(source, ban)
+        return
+    end
+
     local id = buildId(kind, ctxId, source)
     if not id then return end
 
@@ -148,11 +174,19 @@ RegisterNetEvent('kariee_radio:broadcast:play', function(kind, ctxId, song, volu
         playing = true,
         progressAt = 0,
         updatedAt = GetGameTimer(),
+        startedAt = os.time(),
         gen = gen,
     }
 
     local identifier = GetIdentifier(source)
     if identifier then RecordRecentlyPlayed(identifier, song) end
+
+    local played = ActiveBroadcasts[id].song
+    LogRadioActivity(source, 'play', ('“%s” by %s'):format(played.title, played.artist), {
+        kind = kind,
+        label = BroadcastLabel(ActiveBroadcasts[id]),
+        videoId = played.videoId,
+    })
 
     syncAll()
     scheduleEnd(id, gen, ActiveBroadcasts[id].song.duration)
@@ -238,6 +272,21 @@ RegisterNetEvent('kariee_radio:broadcast:removeFromQueue', function(id, index)
         table.remove(b.queue, index + 1)
         syncAll()
     end
+end)
+
+---Replaces the whole shared "up next" list in one go - used for drag-to-reorder, shuffling and
+---clearing the queue on DJ stations / car radios. Songs go through the same SerializeSong
+---validation as enqueue, and the list is capped so a client can't push an unbounded table.
+RegisterNetEvent('kariee_radio:broadcast:setQueue', function(id, songs)
+    local source = source
+    if not canControl(source, id) then return end
+    local b = ActiveBroadcasts[id]
+    if b.kind == 'radio' then return end
+    if type(songs) ~= 'table' then return end
+    local capped = {}
+    for i = 1, math.min(#songs, 200) do capped[i] = songs[i] end
+    b.queue = serializeQueue(capped)
+    syncAll()
 end)
 
 AddEventHandler('playerDropped', function()

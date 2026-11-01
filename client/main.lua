@@ -29,13 +29,21 @@ end
 ---@type table
 ActiveContext = { kind = 'radio', id = ('radio:%s'):format(GetPlayerServerId(PlayerId())) }
 
----Opens the radio NUI bound to the given context (called below, and by client/dj.lua).
----@param context table { kind = 'radio'|'dj'|'radiocar', id = string, stationId?, vehicleNetId? }
-function OpenRadio(context)
-    ActiveContext = context
+---The context the NUI is open with right now - nil when only the admin panel is open (e.g. an
+---admin used /radioadmin inside an interior, where the personal radio isn't allowed).
+---@type table|nil
+OpenContext = nil
+
+---Opens the radio NUI bound to the given context (called below, and by client/dj.lua and
+---client/admin.lua).
+---@param context table|nil { kind = 'radio'|'dj'|'radiocar', id = string, stationId?, vehicleNetId? }
+---@param view string|nil view to land on ('admin' for /radioadmin)
+function OpenRadio(context, view)
+    if context then ActiveContext = context end
+    OpenContext = context
     nuiOpen = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ action = 'open', context = context })
+    SendNUIMessage({ action = 'open', context = context, view = view })
 end
 
 function CloseRadio()
@@ -44,14 +52,33 @@ function CloseRadio()
     SendNUIMessage({ action = 'close' })
 end
 
--- Opens your personal radio, or the car radio if you're in a vehicle (collaborative - any
--- occupant), toggling closed if the panel is already open.
+function IsRadioOpen()
+    return nuiOpen
+end
+
+---Personal radio, or the car radio if you're in a vehicle (collaborative - any occupant).
+---@return table|nil context, string|nil reason message key when there is none
+function ResolveRadioContext()
+    local ped = PlayerPedId()
+    local vehicle = GetVehiclePedIsIn(ped, false)
+
+    if vehicle ~= 0 then
+        local netId = NetworkGetNetworkIdFromEntity(vehicle)
+        return { kind = 'radiocar', id = ('car:%s'):format(netId), vehicleNetId = netId }
+    end
+
+    if GetInteriorFromEntity(ped) ~= 0 then return nil, 'radio_forbidden_interior' end
+
+    return { kind = 'radio', id = ('radio:%s'):format(GetPlayerServerId(PlayerId())) }
+end
+
+-- Toggles the panel open (bound to your radio / car radio) or closed.
 local function toggleRadio()
     if nuiOpen then
         CloseRadio()
         return
     end
-    
+
     -- Right after connecting, the network id / ESX character can briefly still not be ready;
     -- opening on that would silently break every control (play/pause/etc) for the rest of the
     -- session, only fixable with a resource restart.
@@ -60,21 +87,12 @@ local function toggleRadio()
         return
     end
 
-    local ped = PlayerPedId()
-    local vehicle = GetVehiclePedIsIn(ped, false)
-
-    if vehicle ~= 0 then
-        local netId = NetworkGetNetworkIdFromEntity(vehicle)
-        OpenRadio({ kind = 'radiocar', id = ('car:%s'):format(netId), vehicleNetId = netId })
+    local context, reason = ResolveRadioContext()
+    if not context then
+        ESX.ShowNotification(Config.Messages[reason])
         return
     end
-
-    if GetInteriorFromEntity(ped) ~= 0 then
-        ESX.ShowNotification(Config.Messages.radio_forbidden_interior)
-        return
-    end
-
-    OpenRadio({ kind = 'radio', id = ('radio:%s'):format(GetPlayerServerId(PlayerId())) })
+    OpenRadio(context)
 end
 
 RegisterKeyMapping('kradio', 'Open/close the radio', 'keyboard', Config.OpenKey)
@@ -95,7 +113,16 @@ RegisterNUICallback('close', function(_, cb)
     cb({})
 end)
 
-RegisterNUICallback('getState', cbHandler('kariee_radio:getState', function(_) return { ActiveContext } end))
+RegisterNUICallback('getState', cbHandler('kariee_radio:getState', function(_) return { OpenContext } end))
+
+-- Static settings the NUI asks for once on load (it can't read config.lua itself).
+RegisterNUICallback('getConfig', function(_, cb)
+    cb({
+        widget = Config.NowPlayingWidget ~= false,
+        widgetCommand = Config.WidgetCommand,
+        serverId = GetPlayerServerId(PlayerId()),
+    })
+end)
 RegisterNUICallback('createPlaylist', cbHandler('kariee_radio:createPlaylist', function(d) return { d.name, d.cover } end))
 RegisterNUICallback('renamePlaylist', cbHandler('kariee_radio:renamePlaylist', function(d) return { d.id, d.name } end))
 RegisterNUICallback('deletePlaylist', cbHandler('kariee_radio:deletePlaylist', function(d) return { d.id } end))
@@ -156,8 +183,40 @@ RegisterNUICallback('removeFromQueue', function(data, cb)
     cb({})
 end)
 
+RegisterNUICallback('setQueue', function(data, cb)
+    TriggerServerEvent('kariee_radio:broadcast:setQueue', ActiveContext.id, data.queue)
+    cb({})
+end)
+
 -- ─── Live push events from the server ──────────────────────────────────────
 
 RegisterNetEvent('kariee_radio:invite:received', function(invite)
     SendNUIMessage({ action = 'inviteReceived', invite = invite })
+end)
+
+RegisterNetEvent('kariee_radio:notify', function(message)
+    if message then ESX.ShowNotification(message) end
+end)
+
+---Sent when a banned player tries a radio action, when an admin bans them, and (with nil) when
+---the ban is lifted - keeps the NUI's ban banner in sync.
+RegisterNetEvent('kariee_radio:banned', function(ban)
+    SendNUIMessage({ action = 'banned', ban = ban })
+    if not ban then return end
+    local text = ban.scope == 'all' and Config.Messages.banned_all or Config.Messages.banned_dj
+    if ban.reason and ban.reason ~= '' then text = ('%s Reason: %s'):format(text, ban.reason) end
+    ESX.ShowNotification(text)
+end)
+
+-- ─── Nearby now-playing widget ─────────────────────────────────────────────
+
+if Config.NowPlayingWidget ~= false and Config.WidgetCommand then
+    RegisterCommand(Config.WidgetCommand, function()
+        SendNUIMessage({ action = 'widgetToggle' })
+    end, false)
+end
+
+RegisterNUICallback('widgetToggled', function(data, cb)
+    ESX.ShowNotification(data.enabled and Config.Messages.widget_on or Config.Messages.widget_off)
+    cb({})
 end)

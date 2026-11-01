@@ -62,6 +62,29 @@ Config.Placement = {
 -- Ratio (0-1) above which a door is considered "open" for the purposes of muffling.
 Config.DoorOpenThreshold = 0.08
 
+-- ─── Nearby "now playing" widget ────────────────────────────────────────────
+
+-- Small on-screen card (cover, title, artist, time) shown while you're in range of a DJ booth -
+-- or inside its interior. Players can move/hide it in the radio's Settings, or toggle it with
+-- /radiohud. Set to false to turn the widget off for everyone.
+Config.NowPlayingWidget = true
+Config.WidgetCommand = 'radiohud'
+
+-- ─── Admin panel (/radioadmin) ──────────────────────────────────────────────
+
+Config.AdminCommand = 'radioadmin'
+
+-- Who counts as a radio admin: anyone with this ACE permission (false to skip the ACE check)...
+Config.AdminAce = 'group.admin'
+-- ...or anyone whose ESX group is in this list.
+Config.AdminGroups = { 'admin', 'superadmin' }
+
+-- Radius (metres) used for "players nearby" counts and the panel's "Stop music near me" button.
+Config.AdminNearbyRadius = 50.0
+
+-- How many recent radio events (plays, admin actions, bans, booth changes) the panel keeps in memory.
+Config.ActivityLogSize = 150
+
 -- ─── Notifications ──────────────────────────────────────────────────────────
 
 Config.Messages = {
@@ -74,4 +97,10 @@ Config.Messages = {
     dj_interior_occupied = 'There is already a DJ console in this interior.',
     station_removed = 'DJ station removed.',
     not_ready = 'Still connecting, try again in a moment.',
+    admin_stopped = 'An admin stopped your music.',
+    banned_dj = 'You are banned from using DJ booths.',
+    banned_all = 'You are banned from using the radio.',
+    unbanned = 'Your radio ban was lifted.',
+    widget_on = 'Now playing widget shown.',
+    widget_off = 'Now playing widget hidden. Use /radiohud to bring it back.',
 }

@@ -6,37 +6,47 @@ import CoverPicker from '../CoverPicker.vue'
 
 const name = ref('')
 const cover = ref<string | null>(null)
+const busy = ref(false)
+// A random hue for the preview, so a cover-less playlist already shows its generated art.
+const hue = Math.floor(Math.random() * 360)
 
 function close() {
   store.state.createPlaylistOpen = false
-  name.value = ''
-  cover.value = null
 }
 
-function create() {
-  if (!name.value.trim()) return
-  store.createPlaylist(name.value, cover.value)
-  name.value = ''
-  cover.value = null
+async function create() {
+  if (!name.value.trim() || busy.value) return
+  busy.value = true
+  await store.createPlaylist(name.value.trim(), cover.value)
+  busy.value = false
 }
 </script>
 
 <template>
-  <Modal title="New Playlist" @close="close">
-    <form class="form" @submit.prevent="create">
-      <label class="field">
-        <span>Name</span>
-        <input v-model="name" type="text" class="text-input" placeholder="My Playlist" autofocus maxlength="60" />
-      </label>
-      <label class="field">
-        <span>Cover</span>
-        <CoverPicker v-model="cover" :hue="200" />
-      </label>
-      <div class="form-actions">
-        <button type="button" class="btn-secondary" @click="close">Cancel</button>
-        <button type="submit" class="btn-primary" :disabled="!name.trim()">Create Playlist</button>
+  <Modal title="New playlist" subtitle="Collect songs and invite friends to add theirs." icon="plus" @close="close">
+    <form id="create-pl" class="form" @submit.prevent="create">
+      <div class="field">
+        <label for="pl-name">Name</label>
+        <input
+          id="pl-name"
+          v-model="name"
+          type="text"
+          class="text-input"
+          placeholder="e.g. Late Night Cruising"
+          maxlength="60"
+          autofocus
+          required
+        />
+        <span class="counter" aria-hidden="true">{{ name.length }}/60</span>
       </div>
+      <CoverPicker v-model="cover" :hue="hue" />
     </form>
+    <template #footer>
+      <button type="button" class="btn btn-quiet" @click="close">Cancel</button>
+      <button type="submit" form="create-pl" class="btn btn-primary" :disabled="!name.trim() || busy">
+        Create playlist
+      </button>
+    </template>
   </Modal>
 </template>
 
@@ -44,25 +54,28 @@ function create() {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 2rem;
 }
 
 .field {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.6rem;
 }
 
-.field > span {
-  font-size: 11.5px;
-  font-weight: 600;
+.field label {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.counter {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 1.1rem;
+  font-size: 1.1rem;
   color: var(--text-faint);
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
 }
 </style>

@@ -1,287 +1,242 @@
 <script setup lang="ts">
-import type { Song } from '../types'
+import { computed } from 'vue'
+import type { PlayingFrom, Song } from '../types'
 import { store } from '../store'
+import { anchorBelow, anchorFrom } from '../utils/menu'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 
-const props = defineProps<{
-  song: Song
-  index: number
-  context: Song[]
-  contextPlaylistId?: string | number
-}>()
+const props = withDefaults(
+  defineProps<{
+    song: Song
+    index: number
+    context: Song[]
+    contextPlaylistId?: string | number
+    from?: PlayingFrom | null
+  }>(),
+  { from: null },
+)
 
-const isCurrent = () => store.currentSong.value?.id === props.song.id
+const isCurrent = computed(() => store.currentSong.value?.id === props.song.id)
+const isLive = computed(() => isCurrent.value && store.state.isPlaying)
+const liked = computed(() => store.isFavorite(props.song.id))
 
-function handlePlayClick() {
-  if (isCurrent()) store.togglePlay()
-  else store.playSong(props.song, props.context)
+function play() {
+  if (isCurrent.value) store.togglePlay()
+  else store.playSong(props.song, props.context, props.from)
 }
 
 function openMenu(e: MouseEvent) {
-  e.stopPropagation()
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  store.openTrackMenu(props.song.id, rect.right, rect.top, props.contextPlaylistId)
+  store.openTrackMenu(props.song.id, anchorFrom(e), props.contextPlaylistId)
 }
+
+// Rows are one tab stop each; arrows move between them, Enter plays, and the row's other actions
+// live behind Shift+F10 / Menu. Letter keys stay global (L likes the *playing* song, Q opens the
+// queue) so they never mean something different depending on what last had focus.
+function onKey(e: KeyboardEvent) {
+  const row = e.currentTarget as HTMLElement
+  if (e.target !== row) return
+  const handled = () => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  if (e.key === 'Enter' || e.key === ' ') {
+    handled()
+    play()
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    handled()
+    const rows = Array.from(row.closest('[data-tracklist]')?.querySelectorAll<HTMLElement>('.track-row') ?? [])
+    const i = rows.indexOf(row) + (e.key === 'ArrowDown' ? 1 : -1)
+    rows[Math.max(0, Math.min(rows.length - 1, i))]?.focus()
+  } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+    handled()
+    store.openTrackMenu(props.song.id, anchorBelow(row), props.contextPlaylistId)
+  }
+}
+
+const label = computed(
+  () =>
+    `${props.song.title} by ${props.song.artist}, ${store.formatTime(props.song.duration)}` +
+    (isCurrent.value ? (isLive.value ? ', now playing' : ', paused') : ''),
+)
 </script>
 
 <template>
   <div
     class="track-row"
-    :class="{ current: isCurrent(), playing: isCurrent() && store.state.isPlaying }"
-    @dblclick="store.playSong(song, context)"
+    :class="{ current: isCurrent, live: isLive }"
+    tabindex="0"
+    :aria-label="label"
+    @dblclick="play"
+    @keydown="onKey"
+    @contextmenu.prevent="openMenu"
   >
-    <div class="idx-cell">
-      <span class="idx">{{ index + 1 }}</span>
-      <span class="eq-bars"><span /><span /><span /></span>
-    </div>
-    <button
-      class="cover-play-btn"
-      :title="isCurrent() && store.state.isPlaying ? 'Pause' : 'Play'"
-      @click="handlePlayClick"
-    >
-      <Cover :src="song.thumbnail ?? null" :hue="song.hue" :size="34" :radius="6" />
-      <span class="cover-play-overlay">
-        <Icon :name="isCurrent() && store.state.isPlaying ? 'pause' : 'play'" :size="14" />
-      </span>
+    <span class="idx" aria-hidden="true">
+      <span class="num">{{ index + 1 }}</span>
+      <span class="eq" :class="{ live: isLive }"><i /><i /><i /><i /></span>
+    </span>
+
+    <button class="art" tabindex="-1" :aria-label="isLive ? 'Pause' : `Play ${song.title}`" @click.stop="play">
+      <Cover :src="song.thumbnail ?? null" :hue="song.hue" :size="44" :radius="8" />
+      <span class="art-overlay"><Icon :name="isLive ? 'pause' : 'play'" :size="17" /></span>
     </button>
-    <div class="meta">
-      <span class="title">{{ song.title }}</span>
-      <span class="artist">{{ song.artist }}</span>
-    </div>
-    <button
-      class="row-action fav-btn"
-      :class="{ active: store.isFavorite(song.id) }"
-      title="Toggle favourite"
-      @click.stop="store.toggleFavorite(song.id)"
-    >
-      <Icon name="heart" :size="14" :filled="store.isFavorite(song.id)" />
-    </button>
-    <button
-      class="row-action"
-      title="Add to queue"
-      @click.stop="store.addToQueue(song)"
-    >
-      <Icon name="list-plus" :size="15" />
-    </button>
-    <span class="duration">{{ store.formatTime(song.duration) }}</span>
-    <button class="row-action" title="More" @click="openMenu">
-      <Icon name="more-horizontal" :size="16" />
+
+    <span class="meta">
+      <span class="title truncate">{{ song.title }}</span>
+      <span class="artist truncate">{{ song.artist }}</span>
+    </span>
+
+    <span class="actions">
+      <button
+        class="icon-btn sm like"
+        :class="{ liked, reveal: !liked }"
+        tabindex="-1"
+        :aria-label="liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'"
+        :title="liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'"
+        @click.stop="store.toggleFavorite(song.id)"
+      >
+        <Icon name="heart" :size="16" :filled="liked" />
+      </button>
+      <button
+        class="icon-btn sm reveal"
+        tabindex="-1"
+        aria-label="Add to queue"
+        title="Add to queue"
+        @click.stop="store.addToQueue(song)"
+      >
+        <Icon name="list-plus" :size="17" />
+      </button>
+    </span>
+
+    <span class="dur">{{ store.formatTime(song.duration) }}</span>
+
+    <button class="icon-btn sm reveal" tabindex="-1" aria-label="More options" title="More options" @click.stop="openMenu">
+      <Icon name="more-horizontal" :size="18" />
     </button>
   </div>
 </template>
 
 <style scoped>
 .track-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 3rem 4.4rem minmax(0, 1fr) auto 5rem 3rem;
   align-items: center;
-  gap: 12px;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  transition: background-color 0.15s var(--ease);
+  gap: 1.2rem;
+  padding: var(--row-pad) 1rem;
+  border-radius: var(--r-md);
+  cursor: default;
+  user-select: none;
+  transition: background-color 0.14s var(--ease);
 }
 
 .track-row:hover {
-  background: var(--surface-2);
+  background: var(--fill-2);
 }
 
-.track-row.current .title {
-  color: var(--teal);
+.track-row:focus-visible {
+  outline-offset: -0.2rem;
+  background: var(--fill-2);
 }
 
-.idx-cell {
-  width: 22px;
-  height: 16px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-}
-
-.idx-cell > * {
-  grid-area: 1 / 1;
+.track-row.current {
+  background: var(--accent-soft);
 }
 
 .idx {
-  font-size: 12.5px;
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
+  font-weight: 600;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
-  transition: opacity 0.1s var(--ease);
-  pointer-events: none;
 }
 
-.track-row.current .idx,
-.track-row:hover .idx {
+.idx > * {
+  grid-area: 1 / 1;
+}
+
+.idx .eq {
   opacity: 0;
 }
 
-.eq-bars {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
-  height: 13px;
+.current .idx .num {
   opacity: 0;
-  transition: opacity 0.1s var(--ease);
-  pointer-events: none;
 }
 
-.track-row.current .eq-bars {
+.current .idx .eq {
   opacity: 1;
 }
 
-.track-row:hover .eq-bars {
-  opacity: 0;
-}
-
-.eq-bars span {
-  width: 3px;
-  border-radius: 1px;
-  background: var(--teal);
-  transform: scaleY(0.35);
-  transform-origin: bottom;
-}
-
-.track-row.playing .eq-bars span {
-  animation: eq-bounce 0.9s ease-in-out infinite;
-}
-
-.eq-bars span:nth-child(1) {
-  animation-delay: -0.6s;
-}
-
-.eq-bars span:nth-child(2) {
-  animation-delay: -0.2s;
-}
-
-.eq-bars span:nth-child(3) {
-  animation-delay: -0.9s;
-}
-
-@keyframes eq-bounce {
-  0%,
-  100% {
-    transform: scaleY(0.35);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
-.play-hover {
-  opacity: 0;
-  color: var(--text-h);
-  transition: opacity 0.1s var(--ease);
-}
-
-.track-row:hover .play-hover {
-  opacity: 1;
-}
-
-.cover-play-btn {
+.art {
   position: relative;
-  flex-shrink: 0;
   display: block;
-  border-radius: 6px;
+  border-radius: 0.8rem;
 }
 
-.cover-play-overlay {
+.art-overlay {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background: rgba(6, 8, 11, 0.55);
-  color: var(--text-h);
+  border-radius: 0.8rem;
+  background: rgba(8, 6, 10, 0.55);
+  color: #fff;
   opacity: 0;
-  transition: opacity 0.12s var(--ease);
+  transition: opacity 0.14s var(--ease);
 }
 
-.track-row:hover .cover-play-overlay,
-.track-row.current .cover-play-overlay {
+.track-row:hover .art-overlay,
+.track-row:focus-visible .art-overlay {
   opacity: 1;
 }
 
 .meta {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0.15rem;
 }
 
 .title {
-  font-size: 13.5px;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.15s var(--ease);
+  font-size: 1.45rem;
+  font-weight: 650;
+  color: var(--text-h);
+}
+
+.current .title {
+  color: var(--accent);
 }
 
 .artist {
-  font-size: 12px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 1.25rem;
+  color: var(--text-dim);
 }
 
-.duration {
-  font-size: 12px;
+.actions {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.dur {
+  font-size: 1.3rem;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
-  width: 38px;
   text-align: right;
-  flex-shrink: 0;
 }
 
-.row-action {
-  color: var(--text-faint);
+.reveal {
   opacity: 0;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  transition:
-    opacity 0.12s var(--ease),
-    background-color 0.12s var(--ease),
-    color 0.12s var(--ease),
-    transform 0.12s var(--ease);
 }
 
-.track-row:hover .row-action {
+.track-row:hover .reveal,
+.track-row:focus-visible .reveal,
+.track-row:focus-within .reveal {
   opacity: 1;
 }
 
-.row-action:hover {
-  background: var(--surface-3);
-  color: var(--text);
-  transform: scale(1.08);
-}
-
-.fav-btn.active {
-  opacity: 1;
-  color: var(--pink);
-}
-
-.fav-btn.active svg {
-  animation: heart-pop 0.3s var(--ease);
-}
-
-@keyframes heart-pop {
-  0% {
-    transform: scale(1);
-  }
-  35% {
-    transform: scale(1.35);
-  }
-  100% {
-    transform: scale(1);
-  }
+.like::after {
+  display: none;
 }
 </style>
