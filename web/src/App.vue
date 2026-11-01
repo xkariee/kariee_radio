@@ -16,6 +16,7 @@ import ShortcutsModal from './components/modals/ShortcutsModal.vue'
 import BanModal from './components/modals/BanModal.vue'
 import ConfirmModal from './components/modals/ConfirmModal.vue'
 import NearbyWidget from './components/NearbyWidget.vue'
+import CreatorHud from './components/CreatorHud.vue'
 import Icon from './components/Icon.vue'
 import { store } from './store'
 import { ACCENT_HUES, DEFAULT_HUE, applyAccent, applyFlags, applyScale, settings } from './settings'
@@ -196,6 +197,7 @@ function preventMenu(e: MouseEvent) {
     </Transition>
 
     <NearbyWidget />
+    <CreatorHud />
     <ContextMenu />
     <CreatePlaylistModal v-if="state.createPlaylistOpen" />
     <EditPlaylistModal v-if="state.editPlaylistId != null" />

@@ -15,6 +15,8 @@ client_scripts {
     'client/main.lua',
     'client/broadcast.lua',
     'client/dj.lua',
+    'client/lights.lua',
+    'client/creator.lua',
     'client/admin.lua'
 }
 

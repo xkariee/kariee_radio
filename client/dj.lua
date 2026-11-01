@@ -1,12 +1,6 @@
 DjStations = {}
-local spawnedProps = {}
-
----@return number|nil model the model hash, or nil if it failed to load in time
-local function requestDjModel()
-    local model = Config.DjMixerModel
-    if not LoadModel(model) then return nil end
-    return model
-end
+-- stationId -> { obj = entity } (prop booths) or { zone = ox_target zone id } (object/box booths)
+local spawned = {}
 
 ---Opens the radio NUI bound to this station.
 local function tryOpenDjStation(stationId)
@@ -19,23 +13,8 @@ local function tryOpenDjStation(stationId)
     OpenRadio({ kind = 'dj', id = ('dj:%s'):format(stationId), stationId = stationId })
 end
 
-local function spawnStationProp(station)
-    if spawnedProps[station.id] and DoesEntityExist(spawnedProps[station.id]) then
-        exports.ox_target:removeLocalEntity(spawnedProps[station.id])
-        DeleteObject(spawnedProps[station.id])
-    end
-    local model = requestDjModel()
-    if not model then return end
-    local obj = CreateObject(model, station.pos_x, station.pos_y, station.pos_z, false, false, false)
-    SetEntityHeading(obj, station.heading or 0.0)
-    FreezeEntityPosition(obj, true)
-    SetEntityCollision(obj, true, true)
-    spawnedProps[station.id] = obj
-    SetModelAsNoLongerNeeded(model)
-
-    station.interiorId = GetInteriorAtCoords(station.pos_x, station.pos_y, station.pos_z)
-
-    exports.ox_target:addLocalEntity(obj, {
+local function targetOptions(station)
+    return {
         {
             name = 'kariee_radio_dj_' .. station.id,
             icon = 'fa-solid fa-music',
@@ -43,32 +22,74 @@ local function spawnStationProp(station)
             distance = Config.Placement.targetDistance,
             onSelect = function() tryOpenDjStation(station.id) end,
         },
-    })
+    }
 end
 
-local function removeStationProp(stationId)
-    local obj = spawnedProps[stationId]
-    if obj and DoesEntityExist(obj) then
-        exports.ox_target:removeLocalEntity(obj)
-        DeleteObject(obj)
+local function teardownStation(stationId)
+    local s = spawned[stationId]
+    if not s then return end
+    if s.obj and DoesEntityExist(s.obj) then
+        exports.ox_target:removeLocalEntity(s.obj)
+        DeleteObject(s.obj)
     end
-    spawnedProps[stationId] = nil
+    if s.zone then exports.ox_target:removeZone(s.zone) end
+    spawned[stationId] = nil
+end
+
+---Spawns the console prop (or registers the interaction box) for a booth. Booths made before the
+---creator existed have no settings and behave exactly as before: the default prop.
+local function setupStation(station)
+    teardownStation(station.id)
+    station.interiorId = GetInteriorAtCoords(station.pos_x, station.pos_y, station.pos_z)
+
+    local settings = station.settings or {}
+    if (settings.mode == 'zone' or settings.mode == 'entity') and settings.zone then
+        local z = settings.zone
+        spawned[station.id] = {
+            zone = exports.ox_target:addBoxZone({
+                coords = vec3(z.x, z.y, z.z),
+                size = vec3(z.sx, z.sy, z.sz),
+                rotation = z.rot,
+                debug = false,
+                options = targetOptions(station),
+            }),
+        }
+        return
+    end
+
+    local model = settings.model or Config.DjMixerModel
+    if not IsModelInCdimage(model) then model = Config.DjMixerModel end
+    if not LoadModel(model) then return end
+    local obj = CreateObject(model, station.pos_x, station.pos_y, station.pos_z, false, false, false)
+    SetEntityHeading(obj, station.heading or 0.0)
+    FreezeEntityPosition(obj, true)
+    SetEntityCollision(obj, true, true)
+    SetModelAsNoLongerNeeded(model)
+    spawned[station.id] = { obj = obj }
+    exports.ox_target:addLocalEntity(obj, targetOptions(station))
 end
 
 RegisterNetEvent('kariee_radio:dj:created', function(station)
     DjStations[station.id] = station
-    spawnStationProp(station)
+    setupStation(station)
 end)
 
 RegisterNetEvent('kariee_radio:dj:removed', function(stationId)
     DjStations[stationId] = nil
-    removeStationProp(stationId)
+    teardownStation(stationId)
 end)
 
 RegisterNetEvent('kariee_radio:dj:updated', function(stationId, changes)
     local station = DjStations[stationId]
     if not station or type(changes) ~= 'table' then return end
     for k, v in pairs(changes) do station[k] = v end
+    -- A rename only changes the label; a moved console / new setup needs re-spawning.
+    if changes.settings or changes.pos_x then setupStation(station) end
+end)
+
+AddEventHandler('onResourceStop', function(resourceName)
+    if resourceName ~= GetCurrentResourceName() then return end
+    for id in pairs(spawned) do teardownStation(id) end
 end)
 
 CreateThread(function()
@@ -76,131 +97,72 @@ CreateThread(function()
     local stations = lib.callback.await('kariee_radio:dj:getAll', false)
     for id, station in pairs(stations or {}) do
         DjStations[id] = station
-        spawnStationProp(station)
+        setupStation(station)
     end
 end)
 
--- ─── Placement tool ─────────────────────────────────────────────────────────
+-- ─── Sound area helpers (used by client/broadcast.lua, lights and the creator) ─
 
-local function rotationToDirection(rotation)
-    local rad = math.pi / 180
-    local x, y, z = rotation.x * rad, rotation.y * rad, rotation.z * rad
-    return vector3(-math.sin(z) * math.abs(math.cos(x)), math.cos(z) * math.abs(math.cos(x)), math.sin(x))
+---The booth's sound setup. Legacy booths (no settings): the whole interior if it's inside one,
+---otherwise Config.DjOutdoorRange around it.
+---@return table { type = 'interior'|'radius'|'area', range, muffled, points?, minZ?, maxZ?, fade }
+function DjAudioOf(station)
+    local audio = station.settings and station.settings.audio
+    if audio then return audio end
+    if station.interiorId == nil then
+        station.interiorId = GetInteriorAtCoords(station.pos_x, station.pos_y, station.pos_z)
+    end
+    return {
+        type = station.interiorId ~= 0 and 'interior' or 'radius',
+        range = Config.DjOutdoorRange,
+        muffled = Config.MaxRange,
+        fade = Config.DjSound.defaultAreaFade,
+    }
 end
 
-local function raycastGhostPos()
-    local camCoords = GetGameplayCamCoord()
-    local camRot = GetGameplayCamRot(2)
-    local dir = rotationToDirection(camRot)
-    local dest = camCoords + dir * Config.Placement.maxDistance
-    local rayHandle = StartShapeTestRay(camCoords.x, camCoords.y, camCoords.z, dest.x, dest.y, dest.z, 1, PlayerPedId(), 0)
-    local _, hit, endCoords = GetShapeTestResult(rayHandle)
-    return hit == 1 and endCoords or dest
+local function pointInPolygon(x, y, points)
+    local inside = false
+    local j = #points
+    for i = 1, #points do
+        local pi, pj = points[i], points[j]
+        if ((pi.y > y) ~= (pj.y > y)) and (x < (pj.x - pi.x) * (y - pi.y) / (pj.y - pi.y) + pi.x) then
+            inside = not inside
+        end
+        j = i
+    end
+    return inside
 end
 
-local function runPlacementTool()
-    local ped = PlayerPedId()
-    local model = requestDjModel()
-    if not model then
-        ESX.ShowNotification('Failed to load the DJ mixer model, try again.')
-        return
-    end
-    local startCoords = GetEntityCoords(ped)
-    local ghost = CreateObject(model, startCoords.x, startCoords.y, startCoords.z, false, false, false)
-    SetEntityAlpha(ghost, 180, false)
-    SetEntityCollision(ghost, false, false)
-    SetModelAsNoLongerNeeded(model)
-
-    FreezeEntityPosition(ped, true)
-
-    local heightOffset = 0.0
-    local heading = GetEntityHeading(ped)
-    local confirmed = false
-    local finalPos = startCoords
-
-    while true do
-        Wait(0)
-
-        DisableControlAction(0, 24, true)  -- attack
-        DisableControlAction(0, 25, true)  -- aim
-        DisableControlAction(0, 37, true)  -- weapon wheel
-        DisableControlAction(0, 75, true)  -- exit vehicle
-
-        local basePos = raycastGhostPos()
-        finalPos = vector3(basePos.x, basePos.y, basePos.z + heightOffset)
-        SetEntityCoordsNoOffset(ghost, finalPos.x, finalPos.y, finalPos.z, false, false, false)
-
-        if IsControlPressed(0, 174) then -- INPUT_FRONTEND_LEFT
-            heading = (heading + Config.Placement.rotateStep) % 360
-        elseif IsControlPressed(0, 175) then -- INPUT_FRONTEND_RIGHT
-            heading = (heading - Config.Placement.rotateStep) % 360
-        end
-
-        if IsControlPressed(0, 172) then -- INPUT_FRONTEND_UP
-            heightOffset = heightOffset + Config.Placement.heightStep
-        elseif IsControlPressed(0, 173) then -- INPUT_FRONTEND_DOWN
-            heightOffset = heightOffset - Config.Placement.heightStep
-        end
-
-        SetEntityHeading(ghost, heading)
-        ESX.ShowHelpNotification(Config.Messages.placement_help, true)
-
-        if IsControlJustPressed(0, 201) then -- INPUT_FRONTEND_ACCEPT (Enter)
-            confirmed = true
-            break
-        end
-
-        if IsControlJustPressed(0, 200) then -- INPUT_FRONTEND_PAUSE (Esc)
-            confirmed = false
-            break
-        end
-    end
-
-    FreezeEntityPosition(ped, false)
-    DeleteObject(ghost)
-
-    if not confirmed then
-        ESX.ShowNotification(Config.Messages.placement_cancelled)
-        return
-    end
-
-    local newInteriorId = GetInteriorAtCoords(finalPos.x, finalPos.y, finalPos.z)
-    if newInteriorId ~= 0 then
-        for _, station in pairs(DjStations) do
-            if station.interiorId == newInteriorId then
-                ESX.ShowNotification(Config.Messages.dj_interior_occupied)
-                return
-            end
-        end
-    end
-
-    -- Named after where it stands, so booths are easy to tell apart in the admin panel.
-    local street = GetStreetNameFromHashKey(GetStreetNameAtCoord(finalPos.x, finalPos.y, finalPos.z))
-    local label = (street and street ~= '') and ('DJ booth · %s'):format(street) or 'DJ booth'
-
-    local station, err = lib.callback.await('kariee_radio:dj:create', false, { x = finalPos.x, y = finalPos.y, z = finalPos.z }, heading, label)
-    if not station then
-        if err == 'banned' then return end -- the server already told them why
-        ESX.ShowNotification(err == 'no_permission' and Config.Messages.no_permission or 'Failed to create DJ station.')
-        return
-    end
-
-    ESX.ShowNotification(Config.Messages.placement_saved)
-    OpenRadio({ kind = 'dj', id = ('dj:%s'):format(station.id), stationId = station.id })
+local function segmentDistance(px, py, ax, ay, bx, by)
+    local dx, dy = bx - ax, by - ay
+    local len2 = dx * dx + dy * dy
+    local t = len2 > 0 and math.max(0, math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) or 0
+    local cx, cy = ax + t * dx - px, ay + t * dy - py
+    return math.sqrt(cx * cx + cy * cy)
 end
 
----Starts the placement tool (used by /createdj and the admin panel's "Place booth").
-function StartDjPlacement()
-    if not NetworkIsPlayerActive(PlayerId()) or not PlayerLoaded then
-        ESX.ShowNotification(Config.Messages.not_ready)
-        return
+---For a custom sound area: are these coords inside it, and if not, how far outside?
+---@return boolean inside, number distance metres outside the area (0 when inside)
+function DjAreaDistance(audio, coords)
+    local points = audio.points
+    if not points or #points < 3 then return false, math.huge end
+    local inside2d = pointInPolygon(coords.x, coords.y, points)
+    local dz = 0.0
+    if coords.z < audio.minZ then dz = audio.minZ - coords.z elseif coords.z > audio.maxZ then dz = coords.z - audio.maxZ end
+    if inside2d and dz == 0.0 then return true, 0.0 end
+
+    local edge = 0.0
+    if not inside2d then
+        edge = math.huge
+        for i = 1, #points do
+            local a, b = points[i], points[i % #points + 1]
+            edge = math.min(edge, segmentDistance(coords.x, coords.y, a.x, a.y, b.x, b.y))
+        end
     end
-    CreateThread(runPlacementTool)
+    return false, math.sqrt(edge * edge + dz * dz)
 end
 
-RegisterCommand('createdj', StartDjPlacement, false)
-
--- ─── Reopen / remove an existing station ───────────────────────────────────
+-- ─── Commands ──────────────────────────────────────────────────────────────
 
 local function nearestStation()
     local coords = GetEntityCoords(PlayerPedId())
@@ -213,6 +175,28 @@ local function nearestStation()
     end
     return closestId
 end
+
+---Starts the booth creator for a new booth (used by /createdj and the admin panel).
+function StartDjPlacement()
+    StartDjCreator(nil)
+end
+
+RegisterCommand('createdj', function()
+    StartDjCreator(nil)
+end, false)
+
+RegisterCommand('editdj', function()
+    local id = nearestStation()
+    if not id then
+        ESX.ShowNotification(Config.Messages.no_station_nearby)
+        return
+    end
+    if not lib.callback.await('kariee_radio:dj:canManage', false, id) then
+        ESX.ShowNotification(Config.Messages.no_permission)
+        return
+    end
+    StartDjCreator(DjStations[id])
+end, false)
 
 RegisterCommand('dj', function()
     local id = nearestStation()
@@ -232,7 +216,7 @@ RegisterCommand('removedj', function()
     local ok = lib.callback.await('kariee_radio:dj:remove', false, id)
     if ok then
         DjStations[id] = nil
-        removeStationProp(id)
+        teardownStation(id)
     end
     ESX.ShowNotification(ok and Config.Messages.station_removed or Config.Messages.no_permission)
 end, false)

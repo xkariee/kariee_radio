@@ -50,6 +50,16 @@ function cancel() {
 }
 
 const broadcastFor = (s: AdminStation) => data.value.broadcasts.find((b) => b.id === s.broadcastId)
+
+const CONSOLE: Record<string, string> = { prop: 'Prop', entity: 'Object', zone: 'Box' }
+
+function soundLabel(s: AdminStation) {
+  const setup = s.setup
+  if (!setup || setup.audio === 'auto') return s.interior ? 'Whole interior' : 'Radius'
+  if (setup.audio === 'interior') return setup.muffled ? `Interior · ${Math.round(setup.muffled)} m muffled` : 'Interior only'
+  if (setup.audio === 'area') return `Area · ${setup.areaPoints} corners`
+  return `Radius ${Math.round(setup.range ?? 0)} m`
+}
 </script>
 
 <template>
@@ -93,6 +103,11 @@ const broadcastFor = (s: AdminStation) => data.value.broadcasts.find((b) => b.id
           <span class="admin-faint">
             #{{ s.id }} · {{ s.interior ? 'Indoors' : 'Outdoors' }} · placed {{ shortDate(s.createdAt) }}
           </span>
+          <span class="admin-pills">
+            <span class="admin-pill" title="How players open the booth">{{ CONSOLE[s.setup?.mode ?? 'prop'] }}</span>
+            <span class="admin-pill" title="Who hears it"><Icon name="volume-2" :size="11" /> {{ soundLabel(s) }}</span>
+            <span v-if="s.setup?.lights" class="admin-pill accent"><Icon name="sparkles" :size="11" /> {{ s.setup.lights }} lights</span>
+          </span>
         </div>
 
         <div class="admin-cell">
@@ -131,6 +146,14 @@ const broadcastFor = (s: AdminStation) => data.value.broadcasts.find((b) => b.id
           </button>
           <button class="icon-btn sm" :aria-label="`Rename ${s.label}`" title="Rename" @click="startRename(s)">
             <Icon name="edit-2" :size="14" />
+          </button>
+          <button
+            class="icon-btn sm"
+            :aria-label="`Edit setup of ${s.label}`"
+            title="Edit setup (console, sound area, lights)"
+            @click="store.adminEditStation(s)"
+          >
+            <Icon name="sparkles" :size="15" />
           </button>
           <button
             class="icon-btn sm danger"

@@ -8,6 +8,7 @@ import type {
   BanDraft,
   BroadcastKind,
   ConfirmState,
+  CreatorHud,
   Coords,
   Invite,
   LiveBroadcast,
@@ -106,6 +107,8 @@ interface State {
   }
   confirm: ConfirmState | null
   banDraft: BanDraft | null
+  // DJ booth creator HUD (client/creator.lua), null when not creating
+  creator: CreatorHud | null
 }
 
 const playerPrefs = loadJson('player', { shuffle: false, repeat: 'off' as RepeatMode })
@@ -164,6 +167,7 @@ const state = reactive<State>({
   admin: { data: null, loading: false, error: null, tab: 'live', fetchedAt: 0 },
   confirm: null,
   banDraft: null,
+  creator: null,
 })
 
 watch(
@@ -994,6 +998,10 @@ function adminRemoveStation(s: AdminStation) {
   })
 }
 
+function adminEditStation(s: AdminStation) {
+  fetchNui('adminEditStation', { id: s.id })
+}
+
 function adminPlaceStation() {
   fetchNui('adminPlaceStation', {})
 }
@@ -1308,6 +1316,13 @@ function bindNui() {
     state.ban = data.ban ?? null
   })
 
+  onNuiMessage('creator', (data) => {
+    const d = data.data
+    state.creator = d
+      ? { ...d, steps: asArray<string>(d.steps), options: asArray(d.options), info: asArray(d.info), keys: asArray<any>(d.keys).map((k) => ({ ...k, keys: asArray<string>(k.keys) })) }
+      : null
+  })
+
   onNuiMessage('widgetToggle', () => {
     settings.widget = !settings.widget
     fetchNui('widgetToggled', { enabled: settings.widget })
@@ -1410,6 +1425,7 @@ export const store = {
   adminRenameStation,
   adminRemoveStation,
   adminPlaceStation,
+  adminEditStation,
   adminBan,
   adminUnban,
   close: () => fetchNui('close', {}),

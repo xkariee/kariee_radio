@@ -14,9 +14,26 @@ YouTube Data API v3 key used for in-app music search.
 | `F6` (`kradio`) | Everyone | Open your radio, or the car radio when you're in a vehicle |
 | `/dj` | Everyone | Open the DJ booth you're standing at |
 | `/radiohud` | Everyone | Show or hide the nearby "now playing" widget |
-| `/createdj` | DJ permission | Place a new DJ booth (placement tool) |
+| `/createdj` | DJ permission | Create a DJ booth with the step-by-step creator |
+| `/editdj` | Booth owner / admin | Re-open the creator for the booth you're standing at |
 | `/removedj` | Booth owner / admin | Remove the booth you're standing at |
 | `/radioadmin` | Radio admins | Open the admin panel |
+
+## DJ booth creator
+
+`/createdj` (or **Place new booth** in the admin panel) walks you through four steps, with the keys for
+each step shown on screen:
+
+1. **Console**: spawn a prop (cycle models from `Config.DjModels`), pick an **existing object** in the world
+   (great for MLOs), or draw a free **ox_target interaction box**.
+2. **Sound**: indoors it shows which interior will play the music and lets you set how far it's heard
+   (muffled) outside. Outdoors, set a **radius**, or draw a **custom area** corner by corner, with a height
+   and a fade-out distance.
+3. **Disco lights**: place moving spotlights, laser fans, mirror balls and strobes, each with a colour (or
+   rainbow) and speed. They animate to `Config.DiscoLights.bpm` whenever the booth is playing.
+4. **Save**: review and save. `/editdj` (or **Edit setup** in the admin panel) reopens it later.
+
+Booth setups are stored in the `settings` column of `radio_dj_stations` (added automatically).
 
 ## Nearby "now playing" widget
 

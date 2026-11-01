@@ -24,7 +24,11 @@ const preview: LiveBroadcast = {
 const editing = computed(() => state.widgetEditing)
 const b = computed(() => store.widgetBroadcast.value ?? (editing.value ? preview : null))
 const visible = computed(
-  () => state.widgetServerEnabled && !!b.value && (editing.value || (settings.widget && !state.visible)),
+  () =>
+    state.widgetServerEnabled &&
+    !!b.value &&
+    !state.creator &&
+    (editing.value || (settings.widget && !state.visible)),
 )
 const compact = computed(() => settings.widgetSize === 'compact')
 

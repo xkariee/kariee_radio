@@ -216,6 +216,7 @@ lib.callback.register('kariee_radio:admin:getData', function(source)
             broadcastId = ('dj:%s'):format(id),
             playing = active and active.playing or false,
             song = active and active.song or nil,
+            setup = SummarizeDjSetup(s),
         }
     end
 
