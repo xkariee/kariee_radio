@@ -240,6 +240,21 @@ RegisterNetEvent('kariee_radio:broadcast:removeFromQueue', function(id, index)
     end
 end)
 
+---Replaces the whole shared "up next" list in one go - used for drag-to-reorder, shuffling and
+---clearing the queue on DJ stations / car radios. Songs go through the same SerializeSong
+---validation as enqueue, and the list is capped so a client can't push an unbounded table.
+RegisterNetEvent('kariee_radio:broadcast:setQueue', function(id, songs)
+    local source = source
+    if not canControl(source, id) then return end
+    local b = ActiveBroadcasts[id]
+    if b.kind == 'radio' then return end
+    if type(songs) ~= 'table' then return end
+    local capped = {}
+    for i = 1, math.min(#songs, 200) do capped[i] = songs[i] end
+    b.queue = serializeQueue(capped)
+    syncAll()
+end)
+
 AddEventHandler('playerDropped', function()
     local source = source
     local id = buildId('radio', nil, source)

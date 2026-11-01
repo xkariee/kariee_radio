@@ -3,98 +3,112 @@ import { ref } from 'vue'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 
-const props = defineProps<{ modelValue: string | null; hue: number }>()
-const emit = defineEmits<{ 'update:modelValue': [string | null] }>()
+defineProps<{ hue: number; name?: string }>()
+const model = defineModel<string | null>({ required: true })
 
 const urlDraft = ref('')
-// const fileInput = ref<HTMLInputElement | null>(null)
-
-// function pickFile() {
-//   fileInput.value?.click()
-// }
-
-function onFile(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => emit('update:modelValue', reader.result as string)
-  reader.readAsDataURL(file)
-}
+const error = ref('')
 
 function applyUrl() {
-  if (urlDraft.value.trim()) {
-    emit('update:modelValue', urlDraft.value.trim())
-    urlDraft.value = ''
+  const url = urlDraft.value.trim()
+  if (!url) return
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    error.value = 'That doesn’t look like an image link (it should start with https://).'
+    return
   }
+  error.value = ''
+  model.value = url
+  urlDraft.value = ''
 }
-
-// function remove() {
-//   emit('update:modelValue', null)
-// }
 </script>
 
 <template>
-  <div class="cover-picker">
-    <Cover :src="modelValue" :hue="hue" :size="72" :radius="10" icon="disc" />
-    <div class="picker-actions">
-      <!-- <div class="row"> -->
-        <!-- <button type="button" class="btn-secondary sm" @click="pickFile">
-          <Icon name="upload" :size="13" /> Upload
-        </button> -->
-        <!-- <button v-if="modelValue" type="button" class="btn-secondary sm" @click="remove">
-          <Icon name="x" :size="13" /> Remove
-        </button> -->
-      <!-- </div> -->
+  <div class="picker">
+    <div class="preview">
+      <Cover :src="model" :hue="hue" :size="112" :radius="14" icon="music" />
+      <button v-if="model" type="button" class="remove" aria-label="Remove cover image" @click="model = null">
+        <Icon name="x" :size="13" />
+      </button>
+    </div>
+    <div class="fields">
+      <label class="field-label" for="cover-url">Cover image</label>
       <div class="row">
         <input
+          id="cover-url"
           v-model="urlDraft"
-          type="text"
+          type="url"
           class="text-input"
-          placeholder="Paste image URL..."
+          placeholder="Paste an image link"
+          :aria-invalid="!!error"
+          aria-describedby="cover-hint"
           @keydown.enter.prevent="applyUrl"
         />
-        <button type="button" class="btn-secondary sm" @click="applyUrl">
-          <Icon name="link" :size="13" />
-        </button>
+        <button type="button" class="btn btn-secondary sm" :disabled="!urlDraft.trim()" @click="applyUrl">Use</button>
       </div>
-      <input ref="fileInput" type="file" accept="image/*" class="hidden-input" @change="onFile" />
+      <p id="cover-hint" class="hint" :class="{ error }">
+        {{ error || 'Optional. Without an image we’ll generate artwork in this playlist’s colour.' }}
+      </p>
     </div>
   </div>
 </template>
 
 <style scoped>
-.cover-picker {
+.picker {
   display: flex;
-  gap: 14px;
+  gap: 1.6rem;
   align-items: flex-start;
 }
 
-.picker-actions {
+.preview {
+  position: relative;
+  border-radius: 1.4rem;
+  box-shadow: 0 1.2rem 2.8rem -1rem rgba(0, 0, 0, 0.7);
+}
+
+.remove {
+  position: absolute;
+  top: -0.8rem;
+  right: -0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  background: var(--text-h);
+  color: #17141b;
+  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.5);
+}
+
+.fields {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 0;
+  gap: 0.6rem;
+}
+
+.field-label {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-dim);
 }
 
 .row {
   display: flex;
-  gap: 6px;
+  gap: 0.6rem;
 }
 
-.row .text-input {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 10px;
-  font-size: 12.5px;
+.row .btn {
+  height: 4rem;
 }
 
-.hidden-input {
-  display: none;
+.hint {
+  font-size: 1.2rem;
+  color: var(--text-faint);
 }
 
-.btn-secondary.sm {
-  padding: 6px 9px;
-  font-size: 12px;
+.hint.error {
+  color: var(--danger);
 }
 </style>

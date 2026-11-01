@@ -1,16 +1,33 @@
 import { computed, reactive, watch } from 'vue'
-import type { Invite, MenuState, OnlineCandidate, Playlist, Song, ViewKind } from './types'
-import { currentUser, playlists as mockPlaylists, songs as mockSongs } from './data/mock'
-import { searchYouTube, youtubeConfigured } from './services/youtube'
+import type {
+  BroadcastKind,
+  Invite,
+  MenuAnchor,
+  MenuState,
+  Nav,
+  OnlineCandidate,
+  Playlist,
+  PlayingFrom,
+  QueueEntry,
+  RepeatMode,
+  Song,
+  Toast,
+  ViewKind,
+} from './types'
+import {
+  currentUser,
+  invites as mockInvites,
+  playlists as mockPlaylists,
+  recentlyPlayedIds as mockRecent,
+  songs as mockSongs,
+} from './data/mock'
+import { fetchVideoById, parseYouTubeId, searchYouTube, youtubeConfigured } from './services/youtube'
 import * as audioEngine from './services/audioEngine'
 import { fetchNui, isNuiEnv, onNuiMessage } from './services/nui'
+import { loadJson, loadList, saveJson } from './utils/persist'
 
 type PlaylistId = string | number
-
-interface QueueEntry {
-  qid: string
-  songId: string
-}
+type Popover = 'sleep' | null
 
 interface State {
   songs: Song[]
@@ -21,25 +38,44 @@ interface State {
   progress: number
   volume: number
   muted: boolean
+  shuffle: boolean
+  repeat: RepeatMode
   view: ViewKind
   activePlaylistId: PlaylistId | null
+  history: Nav[]
+  historyIndex: number
   recentlyPlayedIds: string[]
+  playingFrom: PlayingFrom | null
   searchQuery: string
   searching: boolean
   searchError: string | null
   searchResultIds: string[]
+  recentSearches: string[]
+  libraryFilter: 'all' | 'mine' | 'shared'
   menu: MenuState | null
+  popover: Popover
   createPlaylistOpen: boolean
   editPlaylistId: PlaylistId | null
   inviteePlaylistId: PlaylistId | null
   deletePlaylistId: PlaylistId | null
+  settingsOpen: boolean
+  shortcutsOpen: boolean
   invites: Invite[]
   candidates: OnlineCandidate[]
   candidateSearching: boolean
   identifier: string
   myName: string
+  contextKind: BroadcastKind | null
+  sleepEndsAt: number | null
+  sleepEndOfTrack: boolean
+  now: number
+  toasts: Toast[]
+  // Bumped to ask the top bar's search input to take focus (shortcut / nav item).
+  focusSearchSignal: number
   visible: boolean
 }
+
+const playerPrefs = loadJson('player', { shuffle: false, repeat: 'off' as RepeatMode })
 
 const state = reactive<State>({
   songs: isNuiEnv ? [] : [...mockSongs],
@@ -50,31 +86,51 @@ const state = reactive<State>({
   progress: 0,
   volume: 68,
   muted: false,
-  view: 'recent',
+  shuffle: playerPrefs.shuffle,
+  repeat: playerPrefs.repeat,
+  view: 'home',
   activePlaylistId: null,
-  recentlyPlayedIds: [],
+  history: [{ view: 'home', playlistId: null }],
+  historyIndex: 0,
+  recentlyPlayedIds: isNuiEnv ? [] : [...mockRecent],
+  playingFrom: null,
   searchQuery: '',
   searching: false,
   searchError: null,
   searchResultIds: [],
+  recentSearches: loadList('recentSearches'),
+  libraryFilter: 'all',
   menu: null,
+  popover: null,
   createPlaylistOpen: false,
   editPlaylistId: null,
   inviteePlaylistId: null,
   deletePlaylistId: null,
-  invites: [],
+  settingsOpen: false,
+  shortcutsOpen: false,
+  invites: isNuiEnv ? [] : [...mockInvites],
   candidates: [],
   candidateSearching: false,
   identifier: currentUser.identifier,
   myName: currentUser.name,
+  contextKind: isNuiEnv ? null : 'radio',
+  sleepEndsAt: null,
+  sleepEndOfTrack: false,
+  now: Date.now(),
+  toasts: [],
+  focusSearchSignal: 0,
   visible: !isNuiEnv,
 })
 
+watch(
+  () => [state.shuffle, state.repeat],
+  () => saveJson('player', { shuffle: state.shuffle, repeat: state.repeat }),
+)
+
 let myBroadcastId: string | null = isNuiEnv ? null : 'radio:dev'
 // DJ stations and car radios are collaborative (shared, server-side queue); personal radio keeps
-// its queue purely local. This tracks which kind the currently-open NUI session is bound to.
-let myContextKind: 'radio' | 'dj' | 'radiocar' | null = isNuiEnv ? null : 'radio'
-const isShared = () => myContextKind === 'dj' || myContextKind === 'radiocar'
+// its queue purely local. state.contextKind tracks which kind the open NUI session is bound to.
+const isShared = () => state.contextKind === 'dj' || state.contextKind === 'radiocar'
 
 let qidSeq = 1000
 const nextQid = () => `q${qidSeq++}`
@@ -148,24 +204,76 @@ const recentlyPlayed = computed(() => state.recentlyPlayedIds.map(songById).filt
 
 const searchResults = computed(() => state.searchResultIds.map(songById).filter((s): s is Song => !!s))
 
+const shared = computed(() => state.contextKind === 'dj' || state.contextKind === 'radiocar')
+
+const anyModalOpen = computed(
+  () =>
+    state.createPlaylistOpen ||
+    state.editPlaylistId != null ||
+    state.inviteePlaylistId != null ||
+    state.deletePlaylistId != null ||
+    state.settingsOpen ||
+    state.shortcutsOpen,
+)
+
+const sleepRemaining = computed(() =>
+  state.sleepEndsAt ? Math.max(0, Math.round((state.sleepEndsAt - state.now) / 1000)) : null,
+)
+
 function formatTime(sec: number): string {
-  const m = Math.floor(sec / 60)
-  const s = Math.floor(sec % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
+  const total = Math.max(0, Math.floor(sec))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return h ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}` : `${m}:${s.toString().padStart(2, '0')}`
 }
 
-// Ticks the displayed progress bar between authoritative server syncs.
-let tickHandle: ReturnType<typeof setInterval> | null = null
-function ensureTicking() {
-  if (tickHandle) return
-  tickHandle = setInterval(() => {
-    if (!state.isPlaying) return
-    const song = currentSong.value
-    if (!song) return
-    if (state.progress < song.duration) state.progress += 1
-  }, 1000)
+function formatLength(sec: number): string {
+  const mins = Math.round(sec / 60)
+  if (mins < 60) return `${mins} min`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m ? `${h} hr ${m} min` : `${h} hr`
 }
-ensureTicking()
+
+function shuffled<T>(list: T[]): T[] {
+  const a = [...list]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+// ─── Toasts ────────────────────────────────────────────────────────────────
+
+let toastSeq = 0
+function toast(text: string, icon = 'check', tone: Toast['tone'] = 'default') {
+  const id = ++toastSeq
+  state.toasts = [...state.toasts.slice(-2), { id, text, icon, tone }]
+  setTimeout(() => dismissToast(id), 2800)
+}
+
+function dismissToast(id: number) {
+  state.toasts = state.toasts.filter((t) => t.id !== id)
+}
+
+// ─── Playback ──────────────────────────────────────────────────────────────
+
+const effectiveVolume = () => (state.muted ? 0 : state.volume)
+
+// Ticks the displayed progress bar between authoritative server syncs, and drives the sleep timer.
+setInterval(() => {
+  state.now = Date.now()
+  if (state.sleepEndsAt && state.now >= state.sleepEndsAt) fireSleepTimer()
+
+  if (!state.isPlaying) return
+  const song = currentSong.value
+  if (!song) return
+  if (state.progress < song.duration) state.progress += 1
+  // No audio engine outside the game - fake the "ended" event so queue/repeat can be exercised.
+  else if (!isNuiEnv) advance(true)
+}, 1000)
 
 function recordRecentlyPlayed(id: string) {
   state.recentlyPlayedIds = [id, ...state.recentlyPlayedIds.filter((x) => x !== id)].slice(0, 30)
@@ -180,26 +288,43 @@ function syncCurrentPlayback() {
   }
   recordRecentlyPlayed(song.id)
   state.isPlaying = true
-  fetchNui('play', { song, volume: state.muted ? 0 : state.volume })
+  fetchNui('play', { song, volume: effectiveVolume() })
 }
 
-function playSong(song: Song, context?: Song[]) {
-  if (isShared()) {
-    const list = context && context.length ? context : [song]
-    const idx = list.findIndex((s) => s.id === song.id)
-    const rest = idx >= 0 ? list.slice(idx + 1) : []
-    recordRecentlyPlayed(song.id)
-    fetchNui('play', { song, volume: state.muted ? 0 : state.volume, queue: rest })
-    return
-  }
-
+function playSong(song: Song, context?: Song[], from: PlayingFrom | null = null) {
+  state.playingFrom = from
   const list = context && context.length ? context : [song]
-  state.queue = list.map((s) => ({ qid: nextQid(), songId: s.id }))
-  state.queueCursor = Math.max(
+  const idx = Math.max(
     0,
     list.findIndex((s) => s.id === song.id),
   )
+
+  if (isShared()) {
+    const rest = state.shuffle ? shuffled(list.filter((_, i) => i !== idx)) : list.slice(idx + 1)
+    recordRecentlyPlayed(song.id)
+    fetchNui('play', { song, volume: effectiveVolume(), queue: rest })
+    return
+  }
+
+  if (state.shuffle) {
+    const others = shuffled(list.map((s, i) => ({ s, i })).filter((x) => x.i !== idx))
+    state.queue = [
+      { qid: nextQid(), songId: song.id, order: idx },
+      ...others.map((x) => ({ qid: nextQid(), songId: x.s.id, order: x.i })),
+    ]
+    state.queueCursor = 0
+  } else {
+    state.queue = list.map((s, i) => ({ qid: nextQid(), songId: s.id, order: i }))
+    state.queueCursor = idx
+  }
   syncCurrentPlayback()
+}
+
+function playList(list: Song[], from: PlayingFrom | null, opts: { shuffle?: boolean } = {}) {
+  if (!list.length) return
+  if (opts.shuffle !== undefined) state.shuffle = opts.shuffle
+  const start = state.shuffle ? list[Math.floor(Math.random() * list.length)] : list[0]
+  playSong(start, list, from)
 }
 
 function togglePlay() {
@@ -209,15 +334,34 @@ function togglePlay() {
   fetchNui('togglePlay', {})
 }
 
-function advance() {
+// `auto` = the song actually finished (vs. the user pressing next), which is the only time
+// repeat-one and the end-of-track sleep timer apply.
+function advance(auto = false) {
+  if (auto && state.sleepEndOfTrack) {
+    state.sleepEndOfTrack = false
+    stopPlayback()
+    toast('Sleep timer ended. Playback stopped.', 'moon')
+    return
+  }
+  if (auto && state.repeat === 'one') {
+    syncCurrentPlayback()
+    return
+  }
   if (state.queueCursor < state.queue.length - 1) {
     state.queueCursor += 1
     syncCurrentPlayback()
+  } else if (state.repeat === 'all' && state.queue.length) {
+    state.queueCursor = 0
+    syncCurrentPlayback()
   } else {
-    state.isPlaying = false
-    state.progress = 0
-    fetchNui('stop', {})
+    stopPlayback()
   }
+}
+
+function stopPlayback() {
+  state.isPlaying = false
+  state.progress = 0
+  fetchNui('stop', {})
 }
 
 function next() {
@@ -233,7 +377,7 @@ function prev() {
     seek(0)
     return
   }
-  if (state.queueCursor > 0) {
+  if (!isShared() && state.queueCursor > 0) {
     state.queueCursor -= 1
     syncCurrentPlayback()
   } else {
@@ -249,31 +393,64 @@ function seek(sec: number) {
   fetchNui('seek', { seconds: clamped })
 }
 
+function seekBy(delta: number) {
+  seek(state.progress + delta)
+}
+
 function setVolume(v: number) {
-  state.volume = Math.min(100, Math.max(0, v))
+  state.volume = Math.round(Math.min(100, Math.max(0, v)))
   if (state.volume > 0) state.muted = false
-  fetchNui('setVolume', { volume: state.muted ? 0 : state.volume })
+  fetchNui('setVolume', { volume: effectiveVolume() })
 }
 
 function toggleMute() {
   state.muted = !state.muted
-  fetchNui('setVolume', { volume: state.muted ? 0 : state.volume })
+  fetchNui('setVolume', { volume: effectiveVolume() })
 }
 
-function addToQueue(song: Song) {
-  if (isShared()) {
-    fetchNui('enqueue', { song })
-    return
+function toggleShuffle(announce = false) {
+  state.shuffle = !state.shuffle
+  // Personal radio: reshuffle (or restore) what's coming up. Shared radios keep the queue as the
+  // group built it - shuffle there only affects how the next list starts playing.
+  if (!isShared()) {
+    const head = state.queue.slice(0, state.queueCursor + 1)
+    const upcoming = state.queue.slice(state.queueCursor + 1)
+    state.queue = [...head, ...(state.shuffle ? shuffled(upcoming) : [...upcoming].sort((a, b) => a.order - b.order))]
   }
-  state.queue.push({ qid: nextQid(), songId: song.id })
+  if (announce) toast(state.shuffle ? 'Shuffle on' : 'Shuffle off', 'shuffle')
+}
+
+function cycleRepeat(announce = false) {
+  if (isShared()) return
+  state.repeat = state.repeat === 'off' ? 'all' : state.repeat === 'all' ? 'one' : 'off'
+  if (announce) {
+    const label = { off: 'Repeat off', all: 'Repeating queue', one: 'Repeating this song' }[state.repeat]
+    toast(label, state.repeat === 'one' ? 'repeat-1' : 'repeat')
+  }
+}
+
+// ─── Queue ─────────────────────────────────────────────────────────────────
+
+function addToQueue(song: Song) {
+  if (isShared()) fetchNui('enqueue', { song })
+  else state.queue.push({ qid: nextQid(), songId: song.id, order: 1e6 + qidSeq })
+  toast(`Added “${song.title}” to queue`, 'list-plus')
+}
+
+function addAllToQueue(list: Song[], label: string) {
+  if (!list.length) return
+  if (isShared()) for (const song of list) fetchNui('enqueue', { song })
+  else for (const song of list) state.queue.push({ qid: nextQid(), songId: song.id, order: 1e6 + qidSeq })
+  toast(`Added ${list.length} songs from ${label} to queue`, 'list-plus')
 }
 
 function playNext(song: Song) {
-  if (isShared()) {
-    fetchNui('enqueueNext', { song })
-    return
+  if (isShared()) fetchNui('enqueueNext', { song })
+  else {
+    const order = (currentEntry.value?.order ?? 0) + 0.5
+    state.queue.splice(state.queueCursor + 1, 0, { qid: nextQid(), songId: song.id, order })
   }
-  state.queue.splice(state.queueCursor + 1, 0, { qid: nextQid(), songId: song.id })
+  toast(`“${song.title}” will play next`, 'skip-forward')
 }
 
 function removeFromQueue(qid: string) {
@@ -290,14 +467,127 @@ function removeFromQueue(qid: string) {
   state.queue.splice(idx, 1)
 }
 
-function setView(view: ViewKind, playlistId: PlaylistId | null = null) {
-  state.view = view
-  state.activePlaylistId = playlistId
-  state.searchQuery = ''
+// Shared radios: replace the whole server-side "up next" list in one go (reorder / shuffle / clear).
+function setUpNext(entries: QueueEntry[]) {
+  if (isShared()) {
+    const songs = entries.map((e) => songById(e.songId)).filter((s): s is Song => !!s)
+    state.queue = [...state.queue.slice(0, 1), ...entries]
+    fetchNui('setQueue', { queue: songs })
+    return
+  }
+  state.queue = [...state.queue.slice(0, state.queueCursor + 1), ...entries]
 }
+
+function reorderUpNext(from: number, to: number) {
+  const up = [...upNext.value]
+  if (from === to || from < 0 || to < 0 || from >= up.length || to >= up.length) return
+  const [entry] = up.splice(from, 1)
+  up.splice(to, 0, entry)
+  setUpNext(up)
+}
+
+function shuffleUpNext() {
+  if (upNext.value.length < 2) return
+  setUpNext(shuffled(upNext.value))
+  toast('Shuffled up next', 'shuffle')
+}
+
+function clearUpNext() {
+  if (!upNext.value.length) return
+  setUpNext([])
+  toast('Cleared up next', 'trash-2')
+}
+
+function jumpTo(qid: string) {
+  const idx = state.queue.findIndex((e) => e.qid === qid)
+  const song = songById(state.queue[idx]?.songId)
+  if (idx === -1 || !song) return
+
+  if (isShared()) {
+    const rest = state.queue
+      .slice(idx + 1)
+      .map((e) => songById(e.songId))
+      .filter((s): s is Song => !!s)
+    recordRecentlyPlayed(song.id)
+    fetchNui('play', { song, volume: effectiveVolume(), queue: rest })
+    return
+  }
+  state.queueCursor = idx
+  syncCurrentPlayback()
+}
+
+// ─── Sleep timer ───────────────────────────────────────────────────────────
+
+function setSleepTimer(option: number | 'end' | null) {
+  state.popover = null
+  state.sleepEndsAt = typeof option === 'number' ? Date.now() + option * 60_000 : null
+  state.sleepEndOfTrack = option === 'end'
+  if (option === null) toast('Sleep timer off', 'moon')
+  else if (option === 'end') toast('Playback will stop after this song', 'moon')
+  else toast(`Sleep timer set for ${option < 60 ? `${option} min` : `${option / 60} hr`}`, 'moon')
+}
+
+function fireSleepTimer() {
+  state.sleepEndsAt = null
+  if (state.isPlaying) togglePlay()
+  toast('Sleep timer ended. Playback paused.', 'moon')
+}
+
+// Shared radios advance server-side, so "end of track" is noticed by the song changing.
+watch(
+  () => currentSong.value?.id,
+  (id, prevId) => {
+    if (state.sleepEndOfTrack && isShared() && prevId && id !== prevId) {
+      state.sleepEndOfTrack = false
+      if (state.isPlaying) togglePlay()
+      toast('Sleep timer ended. Playback paused.', 'moon')
+    }
+  },
+)
+
+// ─── Navigation ────────────────────────────────────────────────────────────
+
+function applyNav(nav: Nav) {
+  state.view = nav.view
+  state.activePlaylistId = nav.playlistId
+  state.menu = null
+}
+
+function setView(view: ViewKind, playlistId: PlaylistId | null = null) {
+  const cur = state.history[state.historyIndex]
+  if (!cur || cur.view !== view || cur.playlistId !== playlistId) {
+    state.history = [...state.history.slice(0, state.historyIndex + 1), { view, playlistId }].slice(-40)
+    state.historyIndex = state.history.length - 1
+  }
+  applyNav({ view, playlistId })
+}
+
+function goBack() {
+  if (state.historyIndex <= 0) return
+  state.historyIndex -= 1
+  applyNav(state.history[state.historyIndex])
+}
+
+function goForward() {
+  if (state.historyIndex >= state.history.length - 1) return
+  state.historyIndex += 1
+  applyNav(state.history[state.historyIndex])
+}
+
+function openSearch(query?: string) {
+  if (query !== undefined) state.searchQuery = query
+  if (state.view !== 'search') setView('search')
+  state.focusSearchSignal++
+}
+
+// ─── Playlists ─────────────────────────────────────────────────────────────
 
 function playlistById(id: PlaylistId) {
   return state.playlists.find((p) => p.id === id)
+}
+
+function playlistSongs(id: PlaylistId) {
+  return (playlistById(id)?.songIds ?? []).map(songById).filter((s): s is Song => !!s)
 }
 
 async function createPlaylist(name: string, cover: string | null) {
@@ -307,21 +597,47 @@ async function createPlaylist(name: string, cover: string | null) {
   state.playlists.push(pl)
   state.createPlaylistOpen = false
   setView('playlist', pl.id)
+  toast(`Created “${pl.name}”`, 'plus')
   return pl
+}
+
+function dropPlaylistLocally(id: PlaylistId) {
+  state.playlists = state.playlists.filter((p) => p.id !== id)
+  if (state.editPlaylistId === id) state.editPlaylistId = null
+  if (state.inviteePlaylistId === id) state.inviteePlaylistId = null
+
+  // Drop it from back/forward history too, so nothing navigates into a ghost.
+  const before = state.history.slice(0, state.historyIndex + 1).filter((n) => n.playlistId !== id).length
+  state.history = state.history.filter((n) => n.playlistId !== id)
+  if (!state.history.length) state.history = [{ view: 'home', playlistId: null }]
+  state.historyIndex = Math.max(0, Math.min(before - 1, state.history.length - 1))
+  if (state.activePlaylistId === id) applyNav(state.history[state.historyIndex])
+}
+
+// Rename / cover / invite / delete are owner-only server-side; collaborators can only leave.
+function isOwnerOf(pl: Playlist) {
+  return !pl.isDefault && pl.ownerIdentifier === state.identifier
 }
 
 function deletePlaylist(id: PlaylistId) {
   const pl = playlistById(id)
-  if (!pl || pl.isDefault) return
-  state.playlists = state.playlists.filter((p) => p.id !== id)
-  if (state.activePlaylistId === id) setView('recent')
-  if (state.editPlaylistId === id) state.editPlaylistId = null
+  if (!pl || !isOwnerOf(pl)) return
+  dropPlaylistLocally(id)
   fetchNui('deletePlaylist', { id })
+  toast(`Deleted “${pl.name}”`, 'trash-2', 'danger')
+}
+
+function leavePlaylist(id: PlaylistId) {
+  const pl = playlistById(id)
+  if (!pl || pl.isDefault || isOwnerOf(pl)) return
+  dropPlaylistLocally(id)
+  fetchNui('removeCollaborator', { playlistId: id, identifier: state.identifier })
+  toast(`Left “${pl.name}”`, 'x')
 }
 
 function requestDeletePlaylist(id: PlaylistId) {
   const pl = playlistById(id)
-  if (!pl || pl.isDefault) return
+  if (!pl || !isOwnerOf(pl)) return
   state.editPlaylistId = null
   state.deletePlaylistId = id
 }
@@ -337,7 +653,7 @@ function confirmDeletePlaylist() {
 
 function renamePlaylist(id: PlaylistId, name: string) {
   const pl = playlistById(id)
-  if (pl && !pl.isDefault && name.trim()) {
+  if (pl && !pl.isDefault && name.trim() && name.trim() !== pl.name) {
     pl.name = name.trim()
     fetchNui('renamePlaylist', { id, name: pl.name })
   }
@@ -345,7 +661,7 @@ function renamePlaylist(id: PlaylistId, name: string) {
 
 function setPlaylistCover(id: PlaylistId, cover: string | null) {
   const pl = playlistById(id)
-  if (pl && !pl.isDefault) {
+  if (pl && !pl.isDefault && cover !== pl.cover) {
     pl.cover = cover
     fetchNui('setPlaylistCover', { id, cover })
   }
@@ -359,23 +675,20 @@ function toggleSongInPlaylist(playlistId: PlaylistId, songId: string) {
   const pl = playlistById(playlistId)
   if (!pl) return
   const idx = pl.songIds.indexOf(songId)
-  if (idx === -1) {
-    pl.songIds.push(songId)
-    if (playlistId === 'favorites') fetchNui('toggleFavorite', { song: songById(songId) })
-    else fetchNui('addTrack', { playlistId, song: songById(songId) })
-  } else {
-    pl.songIds.splice(idx, 1)
-    if (playlistId === 'favorites') fetchNui('toggleFavorite', { song: songById(songId) })
-    else fetchNui('removeTrack', { playlistId, songId })
-  }
+  const adding = idx === -1
+  if (adding) pl.songIds.push(songId)
+  else pl.songIds.splice(idx, 1)
+
+  if (playlistId === 'favorites') fetchNui('toggleFavorite', { song: songById(songId) })
+  else if (adding) fetchNui('addTrack', { playlistId, song: songById(songId) })
+  else fetchNui('removeTrack', { playlistId, songId })
+
+  if (playlistId === 'favorites') toast(adding ? 'Added to Liked Songs' : 'Removed from Liked Songs', 'heart', 'like')
+  else toast(adding ? `Added to ${pl.name}` : `Removed from ${pl.name}`, adding ? 'check' : 'x')
 }
 
 function removeSongFromPlaylist(playlistId: PlaylistId, songId: string) {
-  const pl = playlistById(playlistId)
-  if (!pl) return
-  pl.songIds = pl.songIds.filter((id) => id !== songId)
-  if (playlistId === 'favorites') fetchNui('toggleFavorite', { song: songById(songId) })
-  else fetchNui('removeTrack', { playlistId, songId })
+  if (isInPlaylist(playlistId, songId)) toggleSongInPlaylist(playlistId, songId)
 }
 
 function isFavorite(songId: string) {
@@ -386,8 +699,13 @@ function toggleFavorite(songId: string) {
   toggleSongInPlaylist('favorites', songId)
 }
 
-async function inviteUser(playlistId: PlaylistId, targetId: number) {
-  await fetchNui('invite', { playlistId, targetId })
+function isShareable(pl: Playlist) {
+  return pl.collaborators.length > 0 || pl.ownerIdentifier !== state.identifier
+}
+
+async function inviteUser(playlistId: PlaylistId, target: OnlineCandidate) {
+  await fetchNui('invite', { playlistId, targetId: target.id })
+  toast(`Invite sent to ${target.name}`, 'user-plus')
 }
 
 function removeCollaborator(playlistId: PlaylistId, identifier: string) {
@@ -398,12 +716,14 @@ function removeCollaborator(playlistId: PlaylistId, identifier: string) {
 }
 
 async function acceptInvite(playlistId: PlaylistId) {
+  const invite = state.invites.find((i) => i.playlistId === playlistId)
   const row = await fetchNui<any>('acceptInvite', { playlistId })
   state.invites = state.invites.filter((i) => i.playlistId !== playlistId)
   if (row) {
     for (const t of row.tracks || []) upsertSong(toClientSong(t))
     if (!state.playlists.some((p) => p.id === row.id)) state.playlists.push(toClientPlaylist(row))
   }
+  if (invite) toast(`Joined “${invite.name}”`, 'users')
 }
 
 function declineInvite(playlistId: PlaylistId) {
@@ -416,37 +736,97 @@ function searchCandidates(query: string) {
   if (candidateTimer) clearTimeout(candidateTimer)
   state.candidateSearching = true
   candidateTimer = setTimeout(async () => {
-    state.candidates = await fetchNui<OnlineCandidate[]>('searchPlayers', { query })
+    state.candidates = (await fetchNui<OnlineCandidate[]>('searchPlayers', { query })) ?? []
     state.candidateSearching = false
   }, 250)
 }
 
-function openTrackMenu(trackId: string, x: number, y: number, contextPlaylistId?: PlaylistId) {
-  state.menu = { kind: 'track', trackId, x, y, contextPlaylistId }
+// ─── Menus, layers ─────────────────────────────────────────────────────────
+
+function openTrackMenu(trackId: string, anchor: MenuAnchor, contextPlaylistId?: PlaylistId) {
+  state.popover = null
+  state.menu = { kind: 'track', trackId, contextPlaylistId, ...anchor }
 }
 
-function openPlaylistMenu(playlistId: PlaylistId, x: number, y: number) {
-  state.menu = { kind: 'playlist', playlistId, x, y }
+function openPlaylistMenu(playlistId: PlaylistId, anchor: MenuAnchor) {
+  state.popover = null
+  state.menu = { kind: 'playlist', playlistId, ...anchor }
 }
 
 function closeMenu() {
   state.menu = null
 }
 
+// Escape peels off the topmost layer first; only with nothing left open does it close the radio.
+function dismissTopLayer(): boolean {
+  if (state.menu) state.menu = null
+  else if (state.popover) state.popover = null
+  else if (state.deletePlaylistId != null) state.deletePlaylistId = null
+  else if (state.editPlaylistId != null) state.editPlaylistId = null
+  else if (state.inviteePlaylistId != null) state.inviteePlaylistId = null
+  else if (state.createPlaylistOpen) state.createPlaylistOpen = false
+  else if (state.settingsOpen) state.settingsOpen = false
+  else if (state.shortcutsOpen) state.shortcutsOpen = false
+  else return false
+  return true
+}
+
+async function copyLink(song: Song) {
+  if (!song.videoId) return
+  const url = `https://www.youtube.com/watch?v=${song.videoId}`
+  try {
+    await navigator.clipboard.writeText(url)
+  } catch {
+    // CEF often refuses the async clipboard API - fall back to the legacy copy command.
+    const el = document.createElement('textarea')
+    el.value = url
+    el.style.cssText = 'position:fixed;opacity:0;'
+    document.body.appendChild(el)
+    el.select()
+    document.execCommand('copy')
+    el.remove()
+  }
+  toast('Link copied to clipboard', 'link')
+}
+
+// ─── Search ────────────────────────────────────────────────────────────────
+
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+let searchSeq = 0
+
+function rememberSearch(query: string) {
+  const q = query.trim()
+  state.recentSearches = [q, ...state.recentSearches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8)
+  saveJson('recentSearches', state.recentSearches)
+}
+
+function forgetSearch(query?: string) {
+  state.recentSearches = query ? state.recentSearches.filter((x) => x !== query) : []
+  saveJson('recentSearches', state.recentSearches)
+}
+
+function retrySearch() {
+  const q = state.searchQuery.trim()
+  if (q.length >= 2) runSearch(q)
+}
 
 async function runSearch(query: string) {
+  const seq = ++searchSeq
   state.searching = true
   state.searchError = null
   try {
-    const results = await searchYouTube(query)
+    const linkId = parseYouTubeId(query)
+    const results = linkId ? await fetchVideoById(linkId) : await searchYouTube(query)
+    if (seq !== searchSeq) return // a newer search already replaced this one
     for (const song of results) upsertSong(song)
     state.searchResultIds = results.map((s) => s.id)
+    if (results.length && !linkId) rememberSearch(query)
   } catch {
+    if (seq !== searchSeq) return
     state.searchResultIds = []
-    state.searchError = 'Search failed. Please try again.'
+    state.searchError = 'Search failed. Check your connection and try again.'
   } finally {
-    state.searching = false
+    if (seq === searchSeq) state.searching = false
   }
 }
 
@@ -456,6 +836,7 @@ watch(
     if (searchTimer) clearTimeout(searchTimer)
     const trimmed = q.trim()
     if (!trimmed || trimmed.length < 2 || !youtubeConfigured) {
+      searchSeq++
       state.searchResultIds = []
       state.searchError = null
       state.searching = false
@@ -484,7 +865,7 @@ async function hydrate() {
 
   const favPlaylist: Playlist = {
     id: 'favorites',
-    name: 'My Favourites',
+    name: 'Liked Songs',
     cover: null,
     hue: 335,
     songIds: (data.favorites || []).map((r: any) => r.song_id),
@@ -510,13 +891,14 @@ async function hydrate() {
       const queueSongs = (data.broadcast.queue || []).map(songFromBroadcast)
       for (const s of queueSongs) upsertSong(s)
       state.queue = [
-        { qid: 'current', songId: song.id },
-        ...queueSongs.map((s: Song, i: number) => ({ qid: `q${i}`, songId: s.id })),
+        { qid: 'current', songId: song.id, order: 0 },
+        ...queueSongs.map((s: Song, i: number) => ({ qid: `q${i}`, songId: s.id, order: i + 1 })),
       ]
-    } else {
-      state.queue = [{ qid: nextQid(), songId: song.id }]
+    } else if (currentSong.value?.id !== song.id) {
+      // Reopening the personal radio keeps the local queue if it still matches what's playing.
+      state.queue = [{ qid: nextQid(), songId: song.id, order: 0 }]
     }
-    state.queueCursor = 0
+    if (!state.queue.length || currentSong.value?.id !== song.id) state.queueCursor = 0
     state.progress = data.broadcast.progress || 0
     state.isPlaying = !!data.broadcast.playing
     state.volume = data.broadcast.volume ?? state.volume
@@ -567,8 +949,8 @@ function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
         const queueSongs = (b.queue || []).map(songFromBroadcast)
         for (const s of queueSongs) upsertSong(s)
         state.queue = [
-          { qid: 'current', songId: current.id },
-          ...queueSongs.map((s: Song, i: number) => ({ qid: `q${i}`, songId: s.id })),
+          { qid: 'current', songId: current.id, order: 0 },
+          ...queueSongs.map((s: Song, i: number) => ({ qid: `q${i}`, songId: s.id, order: i + 1 })),
         ]
         state.queueCursor = 0
       }
@@ -582,12 +964,12 @@ function bindNui() {
   onNuiMessage('open', (data) => {
     state.visible = true
     myBroadcastId = data.context?.id ?? null
-    myContextKind = data.context?.kind ?? null
+    state.contextKind = data.context?.kind ?? null
     // Shared broadcasts (dj/radiocar) advance server-side only - every viewer's own "song ended"
     // firing a local advance would race and skip multiple tracks at once.
     if (myBroadcastId) {
       audioEngine.onEnded(myBroadcastId, () => {
-        if (myContextKind === 'radio') advance()
+        if (state.contextKind === 'radio') advance(true)
       })
     }
     hydrate()
@@ -595,6 +977,8 @@ function bindNui() {
 
   onNuiMessage('close', () => {
     state.visible = false
+    state.menu = null
+    state.popover = null
   })
 
   onNuiMessage('broadcastSync', handleBroadcastSync)
@@ -605,10 +989,7 @@ function bindNui() {
 
   onNuiMessage('inviteReceived', (data) => {
     state.invites.push(data.invite)
-  })
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.visible) fetchNui('close', {})
+    toast(`${data.invite?.invitedByName ?? 'Someone'} invited you to “${data.invite?.name ?? 'a playlist'}”`, 'users')
   })
 }
 
@@ -621,23 +1002,43 @@ export const store = {
   activePlaylistSongs,
   recentlyPlayed,
   searchResults,
+  shared,
+  anyModalOpen,
+  sleepRemaining,
   youtubeConfigured,
   isNuiEnv,
   formatTime,
+  formatLength,
   playSong,
+  playList,
   togglePlay,
   next,
   prev,
   seek,
+  seekBy,
   setVolume,
   toggleMute,
+  toggleShuffle,
+  cycleRepeat,
   addToQueue,
+  addAllToQueue,
   playNext,
   removeFromQueue,
+  reorderUpNext,
+  shuffleUpNext,
+  clearUpNext,
+  jumpTo,
+  setSleepTimer,
   setView,
+  goBack,
+  goForward,
+  openSearch,
   playlistById,
+  playlistSongs,
   createPlaylist,
   deletePlaylist,
+  leavePlaylist,
+  isOwnerOf,
   requestDeletePlaylist,
   cancelDeletePlaylist,
   confirmDeletePlaylist,
@@ -648,6 +1049,7 @@ export const store = {
   removeSongFromPlaylist,
   isFavorite,
   toggleFavorite,
+  isShareable,
   inviteUser,
   removeCollaborator,
   acceptInvite,
@@ -656,6 +1058,13 @@ export const store = {
   openTrackMenu,
   openPlaylistMenu,
   closeMenu,
+  dismissTopLayer,
+  copyLink,
+  rememberSearch,
+  forgetSearch,
+  retrySearch,
+  toast,
+  dismissToast,
   songById,
   bindNui,
   close: () => fetchNui('close', {}),

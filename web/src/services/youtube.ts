@@ -42,6 +42,39 @@ function hueFromId(id: string): number {
   return hash
 }
 
+// Accepts the usual share/watch URL shapes (youtube.com/watch, youtu.be, music.youtube.com,
+// shorts, embed) so a pasted link plays that exact video instead of running a text search.
+export function parseYouTubeId(query: string): string | null {
+  const q = query.trim()
+  const match =
+    q.match(/youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)([\w-]{11})/) || q.match(/youtu\.be\/([\w-]{11})/)
+  return match ? match[1] : null
+}
+
+interface YoutubeFullVideoItem extends YoutubeVideoItem {
+  snippet: YoutubeSearchItem['snippet']
+}
+
+export async function fetchVideoById(videoId: string): Promise<Song[]> {
+  if (!API_KEY) throw new Error('missing-key')
+
+  const url =
+    'https://www.googleapis.com/youtube/v3/videos' + `?part=snippet,contentDetails&id=${videoId}&key=${API_KEY}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`YouTube lookup failed (${res.status})`)
+  const json: { items?: YoutubeFullVideoItem[] } = await res.json()
+
+  return (json.items ?? []).map((it) => ({
+    id: `yt:${it.id}`,
+    title: decodeEntities(it.snippet.title),
+    artist: decodeEntities(it.snippet.channelTitle),
+    duration: parseIsoDuration(it.contentDetails.duration),
+    hue: hueFromId(it.id),
+    videoId: it.id,
+    thumbnail: it.snippet.thumbnails?.medium?.url ?? it.snippet.thumbnails?.default?.url ?? null,
+  }))
+}
+
 export async function searchYouTube(query: string): Promise<Song[]> {
   if (!API_KEY) throw new Error('missing-key')
 

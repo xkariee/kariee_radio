@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { store } from '../store'
+import { settings } from '../settings'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
+
+const { state } = store
+const song = store.currentSong
 
 const seeking = ref(false)
 const seekValue = ref(0)
 
-const duration = computed(() => store.currentSong.value?.duration ?? 0)
-const displayProgress = computed(() => (seeking.value ? seekValue.value : store.state.progress))
+const duration = computed(() => song.value?.duration ?? 0)
+const shownProgress = computed(() => (seeking.value ? seekValue.value : state.progress))
+const pct = (v: number, max: number) => `${max > 0 ? Math.min(100, Math.max(0, (v / max) * 100)) : 0}%`
 
 function onSeekInput(e: Event) {
   seeking.value = true
@@ -16,312 +21,485 @@ function onSeekInput(e: Event) {
 }
 
 function onSeekCommit(e: Event) {
-  const v = Number((e.target as HTMLInputElement).value)
-  store.seek(v)
+  store.seek(Number((e.target as HTMLInputElement).value))
   seeking.value = false
 }
 
-function onVolumeInput(e: Event) {
-  store.setVolume(Number((e.target as HTMLInputElement).value))
-}
+const volume = computed(() => (state.muted ? 0 : state.volume))
 
 const volumeIcon = computed(() => {
-  if (store.state.muted || store.state.volume === 0) return 'volume-x'
-  if (store.state.volume < 50) return 'volume-1'
+  if (volume.value === 0) return 'volume-x'
+  if (volume.value < 50) return 'volume-1'
   return 'volume-2'
 })
 
-function fillStyle(value: number, max: number) {
-  const pct = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0
-  return {
-    background: `linear-gradient(to right, var(--teal) ${pct}%, var(--surface-3) ${pct}%)`,
+function onWheel(e: WheelEvent) {
+  store.setVolume(state.volume + (e.deltaY < 0 ? 5 : -5))
+}
+
+const repeatLabel = computed(() => {
+  if (store.shared.value) return 'Repeat is not available on shared radios'
+  return { off: 'Repeat off', all: 'Repeat queue', one: 'Repeat this song' }[state.repeat]
+})
+
+const liked = computed(() => !!song.value && store.isFavorite(song.value.id))
+
+// ─── sleep timer popover ───
+const sleepBtn = ref<HTMLElement | null>(null)
+const sleepMenu = ref<HTMLElement | null>(null)
+
+const sleepOptions: { label: string; value: number | 'end' | null }[] = [
+  { label: '15 minutes', value: 15 },
+  { label: '30 minutes', value: 30 },
+  { label: '45 minutes', value: 45 },
+  { label: '1 hour', value: 60 },
+  { label: '2 hours', value: 120 },
+  { label: 'End of this song', value: 'end' },
+  { label: 'Off', value: null },
+]
+
+const sleepActive = computed(() => state.sleepEndsAt != null || state.sleepEndOfTrack)
+const sleepBadge = computed(() => {
+  if (state.sleepEndOfTrack) return '1♪'
+  const s = store.sleepRemaining.value
+  return s == null ? null : `${Math.ceil(s / 60)}m`
+})
+
+function isSelected(v: number | 'end' | null) {
+  if (v === null) return !sleepActive.value
+  if (v === 'end') return state.sleepEndOfTrack
+  return false
+}
+
+function toggleSleep() {
+  state.popover = state.popover === 'sleep' ? null : 'sleep'
+}
+
+watch(
+  () => state.popover,
+  async (p) => {
+    if (p === 'sleep') {
+      await nextTick()
+      sleepMenu.value?.querySelector<HTMLElement>('[role="menuitemradio"]')?.focus()
+      document.addEventListener('mousedown', onOutside)
+    } else {
+      document.removeEventListener('mousedown', onOutside)
+    }
+  },
+)
+
+function onOutside(e: MouseEvent) {
+  const t = e.target as Node
+  if (!sleepMenu.value?.contains(t) && !sleepBtn.value?.contains(t)) state.popover = null
+}
+
+function onMenuKey(e: KeyboardEvent) {
+  const items = Array.from(sleepMenu.value?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])
+  const i = items.indexOf(document.activeElement as HTMLElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    e.stopPropagation()
+    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus()
+  } else if (e.key === 'Tab' || e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    state.popover = null
+    sleepBtn.value?.focus()
   }
 }
 
-const seekFillStyle = computed(() => fillStyle(displayProgress.value, duration.value))
-const volumeFillStyle = computed(() => fillStyle(store.state.muted ? 0 : store.state.volume, 100))
-
-function openMenu(e: MouseEvent) {
-  const song = store.currentSong.value
-  if (!song) return
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  store.openTrackMenu(song.id, rect.right, rect.top)
-}
+onUnmounted(() => document.removeEventListener('mousedown', onOutside))
 </script>
 
 <template>
-  <footer class="player-bar">
-    <div class="now-playing">
-      <div v-if="store.currentSong.value" class="now-inner">
-        <Cover :src="store.currentSong.value.thumbnail ?? null" :hue="store.currentSong.value.hue" :size="46" :radius="8" />
-        <div class="meta">
-          <span class="title">{{ store.currentSong.value.title }}</span>
-          <span class="artist">{{ store.currentSong.value.artist }}</span>
-        </div>
-        <button
-          class="btn-icon ghost fav-btn"
-          :class="{ active: store.isFavorite(store.currentSong.value.id) }"
-          title="Toggle favourite"
-          @click="store.toggleFavorite(store.currentSong.value.id)"
-        >
-          <Icon name="heart" :size="15" :filled="store.isFavorite(store.currentSong.value.id)" />
-        </button>
-        <button class="btn-icon ghost" title="Add to playlist" @click="openMenu">
-          <Icon name="folder-plus" :size="15" />
-        </button>
+  <footer class="panel dock" aria-label="Player controls" style="overflow: visible">
+    <div class="now">
+      <button
+        class="now-art"
+        :aria-label="settings.nowPlayingPanel ? 'Hide now playing panel' : 'Show now playing panel'"
+        :title="settings.nowPlayingPanel ? 'Hide now playing panel' : 'Show now playing panel'"
+        @click="settings.nowPlayingPanel = !settings.nowPlayingPanel"
+      >
+        <Cover :src="song?.thumbnail ?? null" :hue="song?.hue ?? 330" :size="56" :radius="12" :icon="song ? 'music' : 'radio'" />
+        <span class="now-art-hint"><Icon name="panel-right" :size="16" /></span>
+      </button>
+      <div class="now-meta" aria-live="polite">
+        <template v-if="song">
+          <span class="now-title truncate" :title="song.title">{{ song.title }}</span>
+          <span class="now-artist truncate">{{ song.artist }}</span>
+        </template>
+        <template v-else>
+          <span class="now-title muted">Nothing playing</span>
+          <span class="now-artist">Pick something to get started</span>
+        </template>
       </div>
-      <div v-else class="now-inner">
-        <Cover :src="null" :hue="0" :size="46" :radius="8" />
-        <div class="meta">
-          <span class="title muted">Nothing playing</span>
-          <span class="artist">Pick a song to get started</span>
-        </div>
-      </div>
+      <button
+        v-if="song"
+        class="icon-btn"
+        :class="{ liked }"
+        :aria-label="liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'"
+        :title="liked ? 'Remove from Liked Songs (L)' : 'Add to Liked Songs (L)'"
+        @click="store.toggleFavorite(song.id)"
+      >
+        <Icon name="heart" :size="19" :filled="liked" />
+      </button>
     </div>
 
-    <div class="transport">
-      <div class="controls">
-        <button class="btn-icon ghost" title="Previous" :disabled="!store.currentSong.value" @click="store.prev">
-          <Icon name="skip-back" :size="17" />
+    <div class="center">
+      <div class="transport">
+        <button
+          class="icon-btn"
+          :aria-pressed="state.shuffle"
+          :aria-label="state.shuffle ? 'Shuffle on' : 'Shuffle off'"
+          :title="(state.shuffle ? 'Shuffle on' : 'Shuffle off') + ' (S)'"
+          @click="store.toggleShuffle()"
+        >
+          <Icon name="shuffle" :size="18" />
+        </button>
+        <button class="icon-btn lg" aria-label="Previous" title="Previous (Shift+←)" :disabled="!song" @click="store.prev">
+          <Icon name="skip-back" :size="21" />
         </button>
         <button
-          class="btn-icon play-toggle"
-          :disabled="!store.currentSong.value"
+          class="play-fab main-play"
+          :disabled="!song"
+          :aria-label="state.isPlaying ? 'Pause' : 'Play'"
+          :title="(state.isPlaying ? 'Pause' : 'Play') + ' (Space)'"
           @click="store.togglePlay"
         >
-          <Icon :name="store.state.isPlaying ? 'pause' : 'play'" :size="16" />
+          <Icon :name="state.isPlaying ? 'pause' : 'play'" :size="22" />
         </button>
-        <button class="btn-icon ghost" title="Next" :disabled="!store.currentSong.value" @click="store.next">
-          <Icon name="skip-forward" :size="17" />
+        <button class="icon-btn lg" aria-label="Next" title="Next (Shift+→)" :disabled="!song" @click="store.next">
+          <Icon name="skip-forward" :size="21" />
+        </button>
+        <button
+          class="icon-btn"
+          :aria-pressed="state.repeat !== 'off'"
+          :aria-label="repeatLabel"
+          :title="repeatLabel + (store.shared.value ? '' : ' (R)')"
+          :disabled="store.shared.value"
+          @click="store.cycleRepeat()"
+        >
+          <Icon :name="state.repeat === 'one' ? 'repeat-1' : 'repeat'" :size="18" />
         </button>
       </div>
+
       <div class="timeline">
-        <span class="time">{{ store.formatTime(displayProgress) }}</span>
+        <span class="time" aria-hidden="true">{{ store.formatTime(shownProgress) }}</span>
         <input
-          class="seek"
+          class="range seek"
           type="range"
           min="0"
           :max="duration || 1"
           step="1"
-          :value="displayProgress"
-          :style="seekFillStyle"
-          :disabled="!store.currentSong.value"
+          :value="shownProgress"
+          :style="{ '--pct': pct(shownProgress, duration) }"
+          :disabled="!song"
+          aria-label="Seek"
+          :aria-valuetext="`${store.formatTime(shownProgress)} of ${store.formatTime(duration)}`"
           @input="onSeekInput"
           @change="onSeekCommit"
         />
-        <span class="time">{{ store.formatTime(duration) }}</span>
+        <button
+          class="time end"
+          :aria-label="settings.showRemaining ? 'Showing time remaining. Show total length' : 'Showing total length. Show time remaining'"
+          @click="settings.showRemaining = !settings.showRemaining"
+        >
+          {{ settings.showRemaining && song ? `-${store.formatTime(duration - shownProgress)}` : store.formatTime(duration) }}
+        </button>
       </div>
     </div>
 
-    <div class="volume">
-      <button class="btn-icon ghost" @click="store.toggleMute" :title="store.state.muted ? 'Unmute' : 'Mute'">
-        <Icon :name="volumeIcon" :size="17" />
+    <div class="tools">
+      <div class="sleep-wrap">
+        <button
+          ref="sleepBtn"
+          class="icon-btn"
+          :class="{ on: sleepActive }"
+          aria-haspopup="menu"
+          :aria-expanded="state.popover === 'sleep'"
+          :aria-label="sleepActive ? `Sleep timer, ${sleepBadge} left` : 'Sleep timer'"
+          title="Sleep timer"
+          @click="toggleSleep"
+        >
+          <Icon name="moon" :size="18" />
+          <span v-if="sleepBadge" class="badge" aria-hidden="true">{{ sleepBadge }}</span>
+        </button>
+        <Transition name="pop">
+          <div v-if="state.popover === 'sleep'" ref="sleepMenu" class="popover" role="menu" aria-label="Sleep timer" @keydown="onMenuKey">
+            <p class="pop-title">Stop playing after…</p>
+            <button
+              v-for="o in sleepOptions"
+              :key="o.label"
+              class="pop-item"
+              role="menuitemradio"
+              :aria-checked="isSelected(o.value)"
+              @click="store.setSleepTimer(o.value)"
+            >
+              <span>{{ o.label }}</span>
+              <Icon v-if="isSelected(o.value)" name="check" :size="15" />
+            </button>
+          </div>
+        </Transition>
+      </div>
+
+      <button
+        class="icon-btn"
+        :aria-pressed="state.view === 'queue'"
+        aria-label="Queue"
+        title="Queue (Q)"
+        @click="store.setView(state.view === 'queue' ? 'home' : 'queue')"
+      >
+        <Icon name="list-music" :size="19" />
       </button>
-      <input
-        class="volume-slider"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        :value="store.state.muted ? 0 : store.state.volume"
-        :style="volumeFillStyle"
-        @input="onVolumeInput"
-      />
+      <button
+        class="icon-btn"
+        :aria-pressed="settings.nowPlayingPanel"
+        aria-label="Now playing panel"
+        title="Now playing panel (N)"
+        @click="settings.nowPlayingPanel = !settings.nowPlayingPanel"
+      >
+        <Icon name="panel-right" :size="19" />
+      </button>
+
+      <div class="volume" @wheel.prevent="onWheel">
+        <button
+          class="icon-btn"
+          :aria-label="state.muted ? 'Unmute' : 'Mute'"
+          :title="(state.muted ? 'Unmute' : 'Mute') + ' (M)'"
+          @click="store.toggleMute"
+        >
+          <Icon :name="volumeIcon" :size="19" />
+        </button>
+        <input
+          class="range vol"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          :value="volume"
+          :style="{ '--pct': pct(volume, 100) }"
+          aria-label="Volume"
+          :aria-valuetext="`${volume}%`"
+          @input="store.setVolume(Number(($event.target as HTMLInputElement).value))"
+        />
+        <span class="vol-num" aria-hidden="true">{{ volume }}</span>
+      </div>
     </div>
   </footer>
 </template>
 
 <style scoped>
-.player-bar {
-  position: relative;
+.dock {
   display: grid;
-  grid-template-columns: 1fr minmax(320px, 560px) 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(34rem, 1.5fr) minmax(0, 1fr);
   align-items: center;
-  gap: 20px;
-  padding: 12px 18px;
-  background: var(--surface-1);
-  flex-shrink: 0;
+  gap: 2rem;
+  padding: 1.2rem 1.8rem 1.2rem 1.2rem;
+  min-height: 9.2rem;
 }
 
-.player-bar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--line) 15%, var(--line) 85%, transparent);
-}
-
-.now-playing {
-  min-width: 0;
-}
-
-.now-inner {
+.now {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 1.3rem;
   min-width: 0;
 }
 
-.fav-btn.active {
-  color: var(--pink);
+.now-art {
+  position: relative;
+  border-radius: 1.2rem;
+  box-shadow: 0 0.8rem 2rem -0.8rem rgba(0, 0, 0, 0.7);
 }
 
-.meta {
+.now-art-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1.2rem;
+  background: rgba(8, 6, 10, 0.55);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+
+.now-art:hover .now-art-hint,
+.now-art:focus-visible .now-art-hint {
+  opacity: 1;
+}
+
+.now-meta {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 0;
+  gap: 0.2rem;
 }
 
-.title {
-  font-size: 13.5px;
-  font-weight: 500;
+.now-title {
+  font-size: 1.5rem;
+  font-weight: 700;
   color: var(--text-h);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.title.muted {
-  color: var(--text-faint);
-  font-weight: 400;
+.now-title.muted {
+  color: var(--text-dim);
 }
 
-.artist {
-  font-size: 12px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.now-artist {
+  font-size: 1.25rem;
+  color: var(--text-dim);
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
 }
 
 .transport {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
+  gap: 0.6rem;
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.controls .btn-icon.ghost:hover:not(:disabled) {
-  transform: scale(1.1);
+.transport .icon-btn.lg {
   color: var(--text-h);
 }
 
-.play-toggle {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  margin: 0 6px;
-  background: linear-gradient(155deg, var(--teal-hover), var(--teal-soft));
-  color: #062420;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.3) inset,
-    0 6px 16px -4px var(--teal-glow);
-  transition:
-    transform 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
-}
-
-.play-toggle:hover:not(:disabled) {
-  transform: scale(1.06);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.35) inset,
-    0 8px 22px -4px var(--teal-glow);
-}
-
-.play-toggle:active:not(:disabled) {
-  transform: scale(0.98);
+.main-play {
+  width: 4.8rem;
+  height: 4.8rem;
+  margin: 0 0.6rem;
 }
 
 .timeline {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 1rem;
   width: 100%;
 }
 
 .time {
-  font-size: 11px;
+  width: 4.6rem;
+  flex-shrink: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
-  width: 32px;
-  flex-shrink: 0;
+  text-align: right;
 }
 
-.time:last-child {
-  text-align: right;
+.time.end {
+  text-align: left;
+  border-radius: var(--r-xs);
+  transition: color 0.15s var(--ease);
+}
+
+.time.end:hover {
+  color: var(--text-h);
+}
+
+.seek {
+  flex: 1;
+}
+
+.timeline:hover .seek::-webkit-slider-runnable-track {
+  height: 0.6rem;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.sleep-wrap {
+  position: relative;
+}
+
+.badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.4rem;
+  min-width: 2rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + 1.4rem);
+  right: -6rem;
+  z-index: 50;
+  width: 22rem;
+  padding: 0.6rem;
+  border-radius: var(--r-lg);
+  background: var(--panel-raised);
+  border: 0.1rem solid var(--line-2);
+  box-shadow: var(--shadow-pop);
+  transform-origin: bottom center;
+}
+
+.pop-title {
+  padding: 0.8rem 1rem 0.6rem;
+  font-size: 1.15rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.pop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 3.6rem;
+  padding: 0 1rem;
+  border-radius: var(--r-sm);
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pop-item:hover,
+.pop-item:focus-visible {
+  background: var(--fill-2);
+  color: var(--text-h);
+  outline: none;
+}
+
+.pop-item[aria-checked='true'] {
+  color: var(--accent);
 }
 
 .volume {
   display: flex;
   align-items: center;
-  gap: 8px;
-  justify-self: end;
-  width: 150px;
+  gap: 0.4rem;
+  margin-left: 0.4rem;
 }
 
-.volume-slider {
-  width: 100px;
+.vol {
+  width: 10rem;
 }
 
-/* range input styling shared by seek + volume */
-input[type='range'] {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface-3);
-  outline: none;
-  flex: 1;
-  transition: height 0.12s var(--ease);
-}
-
-input[type='range']::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--teal);
-  cursor: pointer;
-  box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.25);
-  transition:
-    transform 0.12s var(--ease),
-    box-shadow 0.12s var(--ease);
-}
-
-input[type='range']:hover::-webkit-slider-thumb {
-  transform: scale(1.3);
-  box-shadow: 0 0 0 6px rgba(45, 212, 191, 0.18);
-}
-
-input[type='range']:active::-webkit-slider-thumb {
-  transform: scale(1.15);
-}
-
-input[type='range']::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
-  border: none;
-  border-radius: 50%;
-  background: var(--teal);
-  cursor: pointer;
-  transition: transform 0.12s var(--ease);
-}
-
-input[type='range']:hover::-moz-range-thumb {
-  transform: scale(1.3);
-}
-
-input[type='range']:disabled {
-  opacity: 0.4;
+.vol-num {
+  width: 2.8rem;
+  font-size: 1.15rem;
+  font-weight: 650;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 </style>

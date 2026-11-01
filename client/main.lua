@@ -156,6 +156,11 @@ RegisterNUICallback('removeFromQueue', function(data, cb)
     cb({})
 end)
 
+RegisterNUICallback('setQueue', function(data, cb)
+    TriggerServerEvent('kariee_radio:broadcast:setQueue', ActiveContext.id, data.queue)
+    cb({})
+end)
+
 -- ─── Live push events from the server ──────────────────────────────────────
 
 RegisterNetEvent('kariee_radio:invite:received', function(invite)
