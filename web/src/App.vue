@@ -13,6 +13,9 @@ import InviteModal from './components/modals/InviteModal.vue'
 import DeleteConfirmModal from './components/modals/DeleteConfirmModal.vue'
 import SettingsModal from './components/modals/SettingsModal.vue'
 import ShortcutsModal from './components/modals/ShortcutsModal.vue'
+import BanModal from './components/modals/BanModal.vue'
+import ConfirmModal from './components/modals/ConfirmModal.vue'
+import NearbyWidget from './components/NearbyWidget.vue'
 import Icon from './components/Icon.vue'
 import { store } from './store'
 import { ACCENT_HUES, DEFAULT_HUE, applyAccent, applyFlags, applyScale, settings } from './settings'
@@ -29,7 +32,8 @@ watch(accentSource, applyAccent, { immediate: true })
 watch(() => settings.scale, applyScale, { immediate: true })
 watch(() => [settings.reduceMotion, settings.highContrast, settings.density], applyFlags, { immediate: true })
 
-const railOpen = computed(() => settings.nowPlayingPanel)
+// The admin tables need the width, so the Now Playing panel steps aside there.
+const railOpen = computed(() => settings.nowPlayingPanel && state.view !== 'admin')
 
 // `state.visible` mirrors the real NUI focus toggle - hidden until the client sends `open`
 // (via the keybind, DJ booth or car), driven entirely by client/main.lua in the FiveM build.
@@ -54,6 +58,9 @@ function onKey(e: KeyboardEvent) {
     if (!store.dismissTopLayer()) close()
     return
   }
+
+  // Moving the nearby widget: its own keys (arrows/Enter) are handled on the widget itself.
+  if (state.widgetEditing) return
 
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'k')) {
     e.preventDefault()
@@ -161,7 +168,12 @@ function preventMenu(e: MouseEvent) {
 <template>
   <div class="stage">
     <Transition name="shell" appear>
-      <div v-if="state.visible" class="shell" :class="{ 'rail-open': railOpen }">
+      <div
+        v-if="state.visible"
+        class="shell"
+        :class="{ 'rail-open': railOpen, 'out-of-way': state.widgetEditing }"
+        :inert="state.widgetEditing || undefined"
+      >
         <Sidebar class="area-side" style="--i: 0" />
         <main class="panel main-panel area-main" style="--i: 1" aria-label="Browse music">
           <div class="main-wash" aria-hidden="true" />
@@ -183,6 +195,7 @@ function preventMenu(e: MouseEvent) {
       </button>
     </Transition>
 
+    <NearbyWidget />
     <ContextMenu />
     <CreatePlaylistModal v-if="state.createPlaylistOpen" />
     <EditPlaylistModal v-if="state.editPlaylistId != null" />
@@ -190,6 +203,8 @@ function preventMenu(e: MouseEvent) {
     <DeleteConfirmModal v-if="state.deletePlaylistId != null" />
     <SettingsModal v-if="state.settingsOpen" />
     <ShortcutsModal v-if="state.shortcutsOpen" />
+    <BanModal v-if="state.banDraft" />
+    <ConfirmModal v-if="state.confirm" />
   </div>
 </template>
 
@@ -218,11 +233,24 @@ function preventMenu(e: MouseEvent) {
     'side . dock dock';
   column-gap: 0;
   row-gap: 1.2rem;
-  transition: --rail-w 0.55s var(--ease-out);
 }
 
 .shell.rail-open {
   --rail-w: 32.2rem;
+}
+
+/* Fades away (but stays mounted) while the nearby widget is being moved. */
+.shell.out-of-way {
+  opacity: 0;
+  transform: scale(0.97);
+  pointer-events: none;
+}
+
+.shell {
+  transition:
+    --rail-w 0.55s var(--ease-out),
+    opacity 0.25s var(--ease),
+    transform 0.3s var(--ease-out);
 }
 
 .area-side {

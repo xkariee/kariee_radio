@@ -1,3 +1,5 @@
+import { devAdminData } from '../data/mock'
+
 declare global {
   interface Window {
     GetParentResourceName?: () => string
@@ -28,6 +30,15 @@ const devResponses: Record<string, (data: any) => unknown> = {
       { id: 47, name: 'Mako Tanaka' },
       { id: 58, name: 'Lena Voss' },
     ].filter((p) => p.name.toLowerCase().includes(String(d.query ?? '').toLowerCase())),
+  adminGetData: () => devAdminData(),
+  adminStop: () => true,
+  adminStopNear: () => 2,
+  adminStopAll: () => 4,
+  adminWaypoint: () => true,
+  adminRenameStation: () => true,
+  adminRemoveStation: () => true,
+  adminUnban: () => true,
+  adminBan: () => ({ ok: true, stopped: 1 }),
 }
 
 export async function fetchNui<T = any>(event: string, data: unknown = {}): Promise<T> {

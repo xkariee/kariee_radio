@@ -8,12 +8,16 @@ import Cover from './Cover.vue'
 
 const { state } = store
 
-const navItems: { view: ViewKind; label: string; icon: string }[] = [
+const navItems = computed<{ view: ViewKind; label: string; icon: string }[]>(() => [
   { view: 'home', label: 'Home', icon: 'home' },
   { view: 'search', label: 'Search', icon: 'search' },
   { view: 'queue', label: 'Queue', icon: 'list-music' },
   { view: 'recent', label: 'Recently played', icon: 'history' },
-]
+  ...(state.isAdmin ? [{ view: 'admin' as ViewKind, label: 'Admin', icon: 'shield' }] : []),
+])
+
+// Every client already receives every broadcast, so the admin badge needs no extra request.
+const liveCount = computed(() => Object.values(state.live).filter((b) => b.playing).length)
 
 function go(view: ViewKind) {
   if (view === 'search') store.openSearch()
@@ -90,6 +94,9 @@ function openMenu(e: MouseEvent, pl: Playlist) {
           <span>{{ item.label }}</span>
           <span v-if="item.view === 'queue' && store.upNext.value.length" class="count">
             {{ store.upNext.value.length }}<span class="sr-only"> songs queued</span>
+          </span>
+          <span v-if="item.view === 'admin' && liveCount" class="count live" :title="`${liveCount} radios playing on the server`">
+            <i aria-hidden="true" />{{ liveCount }}<span class="sr-only"> radios playing</span>
           </span>
         </button>
       </li>
@@ -309,6 +316,19 @@ function openMenu(e: MouseEvent, pl: Playlist) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.count.live {
+  gap: 0.5rem;
+  background: rgba(98, 227, 166, 0.12);
+  color: var(--ok);
+}
+
+.count.live i {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .library {

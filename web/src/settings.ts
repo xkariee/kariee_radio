@@ -15,7 +15,16 @@ export interface Settings {
   ambient: boolean
   showRemaining: boolean
   nowPlayingPanel: boolean
+  // Nearby now-playing widget (shown in range of a DJ booth / inside its room)
+  widget: boolean
+  widgetScope: 'dj' | 'all'
+  widgetSize: 'full' | 'compact'
+  // 0..1 across the free space on screen (0 = flush left/top, 1 = flush right/bottom)
+  widgetX: number
+  widgetY: number
 }
+
+export const WIDGET_DEFAULT_POS = { x: 1, y: 0.3 }
 
 export const ACCENT_HUES: Record<Exclude<AccentChoice, 'adaptive' | 'custom'>, number> = {
   rose: 336,
@@ -42,6 +51,11 @@ export const defaultSettings: Settings = {
   ambient: true,
   showRemaining: false,
   nowPlayingPanel: true,
+  widget: true,
+  widgetScope: 'dj',
+  widgetSize: 'full',
+  widgetX: WIDGET_DEFAULT_POS.x,
+  widgetY: WIDGET_DEFAULT_POS.y,
 }
 
 export const settings = reactive<Settings>(loadJson('settings', defaultSettings))

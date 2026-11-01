@@ -65,6 +65,12 @@ RegisterNetEvent('kariee_radio:dj:removed', function(stationId)
     removeStationProp(stationId)
 end)
 
+RegisterNetEvent('kariee_radio:dj:updated', function(stationId, changes)
+    local station = DjStations[stationId]
+    if not station or type(changes) ~= 'table' then return end
+    for k, v in pairs(changes) do station[k] = v end
+end)
+
 CreateThread(function()
     while not NetworkIsPlayerActive(PlayerId()) do Wait(250) end
     local stations = lib.callback.await('kariee_radio:dj:getAll', false)
@@ -168,8 +174,13 @@ local function runPlacementTool()
         end
     end
 
-    local station, err = lib.callback.await('kariee_radio:dj:create', false, { x = finalPos.x, y = finalPos.y, z = finalPos.z }, heading, 'DJ Station')
+    -- Named after where it stands, so booths are easy to tell apart in the admin panel.
+    local street = GetStreetNameFromHashKey(GetStreetNameAtCoord(finalPos.x, finalPos.y, finalPos.z))
+    local label = (street and street ~= '') and ('DJ booth · %s'):format(street) or 'DJ booth'
+
+    local station, err = lib.callback.await('kariee_radio:dj:create', false, { x = finalPos.x, y = finalPos.y, z = finalPos.z }, heading, label)
     if not station then
+        if err == 'banned' then return end -- the server already told them why
         ESX.ShowNotification(err == 'no_permission' and Config.Messages.no_permission or 'Failed to create DJ station.')
         return
     end
@@ -178,13 +189,16 @@ local function runPlacementTool()
     OpenRadio({ kind = 'dj', id = ('dj:%s'):format(station.id), stationId = station.id })
 end
 
-RegisterCommand('createdj', function()
+---Starts the placement tool (used by /createdj and the admin panel's "Place booth").
+function StartDjPlacement()
     if not NetworkIsPlayerActive(PlayerId()) or not PlayerLoaded then
         ESX.ShowNotification(Config.Messages.not_ready)
         return
     end
     CreateThread(runPlacementTool)
-end, false)
+end
+
+RegisterCommand('createdj', StartDjPlacement, false)
 
 -- ─── Reopen / remove an existing station ───────────────────────────────────
 

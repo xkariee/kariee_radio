@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { store } from '../../store'
-import { ACCENT_HUES, accentPalette, paletteFor, resetSettings, settings, type AccentChoice } from '../../settings'
+import {
+  ACCENT_HUES,
+  WIDGET_DEFAULT_POS,
+  accentPalette,
+  paletteFor,
+  resetSettings,
+  settings,
+  type AccentChoice,
+} from '../../settings'
 import Modal from '../Modal.vue'
 import Toggle from '../Toggle.vue'
 import Icon from '../Icon.vue'
@@ -170,6 +178,60 @@ function nudgeScale(delta: number) {
         />
         <Toggle v-model="settings.showRemaining" icon="clock" label="Show time remaining" description="Instead of total song length." />
       </section>
+
+      <section aria-labelledby="s-widget">
+        <h3 id="s-widget" class="eyebrow">Nearby now playing</h3>
+        <p v-if="!store.state.widgetServerEnabled" class="server-off">
+          <Icon name="alert" :size="14" /> This server has turned the widget off.
+        </p>
+        <template v-else>
+          <Toggle
+            v-model="settings.widget"
+            icon="widget"
+            label="Show nearby now playing"
+            :description="`A small card with the song when you’re near a DJ booth or inside its room. /${store.state.widgetCommand} toggles it too.`"
+          />
+          <div class="setting" :class="{ dim: !settings.widget }">
+            <div class="widget-row">
+              <span class="s-label"><span id="w-scope">Show it for</span></span>
+              <div class="segmented" role="radiogroup" aria-labelledby="w-scope">
+                <button class="chip" role="radio" :aria-checked="settings.widgetScope === 'dj'" :disabled="!settings.widget" @click="settings.widgetScope = 'dj'">
+                  DJ booths
+                </button>
+                <button class="chip" role="radio" :aria-checked="settings.widgetScope === 'all'" :disabled="!settings.widget" @click="settings.widgetScope = 'all'">
+                  Any radio nearby
+                </button>
+              </div>
+            </div>
+            <div class="widget-row">
+              <span class="s-label"><span id="w-size">Style</span></span>
+              <div class="segmented" role="radiogroup" aria-labelledby="w-size">
+                <button class="chip" role="radio" :aria-checked="settings.widgetSize === 'full'" :disabled="!settings.widget" @click="settings.widgetSize = 'full'">
+                  Full
+                </button>
+                <button class="chip" role="radio" :aria-checked="settings.widgetSize === 'compact'" :disabled="!settings.widget" @click="settings.widgetSize = 'compact'">
+                  Compact
+                </button>
+              </div>
+            </div>
+            <div class="widget-row">
+              <span class="s-label">Position</span>
+              <div class="segmented">
+                <button class="btn btn-secondary sm" :disabled="!settings.widget" @click="store.startWidgetEditing()">
+                  <Icon name="move" :size="14" /> Move widget
+                </button>
+                <button
+                  class="btn btn-quiet sm"
+                  :disabled="!settings.widget"
+                  @click="Object.assign(settings, { widgetX: WIDGET_DEFAULT_POS.x, widgetY: WIDGET_DEFAULT_POS.y })"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </section>
     </div>
 
     <template #footer>
@@ -268,6 +330,26 @@ section > .eyebrow {
   box-shadow:
     0 0 0 0.25rem var(--panel-raised),
     0 0 0 0.4rem var(--fill-4);
+}
+
+.widget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+}
+
+.setting.dim .s-label {
+  opacity: 0.5;
+}
+
+.server-off {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 1.2rem;
+  font-size: 1.3rem;
+  color: var(--text-dim);
 }
 
 .custom-panel {

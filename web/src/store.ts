@@ -1,14 +1,25 @@
 import { computed, reactive, watch } from 'vue'
 import type {
+  AdminBan,
+  AdminBroadcast,
+  AdminData,
+  AdminStation,
+  AdminTab,
+  BanDraft,
   BroadcastKind,
+  ConfirmState,
+  Coords,
   Invite,
+  LiveBroadcast,
   MenuAnchor,
   MenuState,
   Nav,
   OnlineCandidate,
   Playlist,
   PlayingFrom,
+  Proximity,
   QueueEntry,
+  RadioBan,
   RepeatMode,
   Song,
   Toast,
@@ -16,6 +27,7 @@ import type {
 } from './types'
 import {
   currentUser,
+  devLiveBroadcast,
   invites as mockInvites,
   playlists as mockPlaylists,
   recentlyPlayedIds as mockRecent,
@@ -25,6 +37,8 @@ import { fetchVideoById, parseYouTubeId, searchYouTube, youtubeConfigured } from
 import * as audioEngine from './services/audioEngine'
 import { fetchNui, isNuiEnv, onNuiMessage } from './services/nui'
 import { loadJson, loadList, saveJson } from './utils/persist'
+import { asArray } from './utils/format'
+import { settings } from './settings'
 
 type PlaylistId = string | number
 type Popover = 'sleep' | null
@@ -73,6 +87,25 @@ interface State {
   // Bumped to ask the top bar's search input to take focus (shortcut / nav item).
   focusSearchSignal: number
   visible: boolean
+  // ─── nearby / bans / admin ───
+  serverId: number | null
+  isAdmin: boolean
+  ban: RadioBan | null
+  // every broadcast on the server, and whether we're in range of each
+  live: Record<string, LiveBroadcast>
+  proximity: Record<string, Proximity>
+  widgetServerEnabled: boolean
+  widgetCommand: string
+  widgetEditing: boolean
+  admin: {
+    data: AdminData | null
+    loading: boolean
+    error: string | null
+    tab: AdminTab
+    fetchedAt: number
+  }
+  confirm: ConfirmState | null
+  banDraft: BanDraft | null
 }
 
 const playerPrefs = loadJson('player', { shuffle: false, repeat: 'off' as RepeatMode })
@@ -120,6 +153,17 @@ const state = reactive<State>({
   toasts: [],
   focusSearchSignal: 0,
   visible: !isNuiEnv,
+  serverId: isNuiEnv ? null : 7,
+  isAdmin: !isNuiEnv,
+  ban: null,
+  live: isNuiEnv ? {} : { [devLiveBroadcast.id]: { ...devLiveBroadcast, syncedAt: Date.now() } },
+  proximity: isNuiEnv ? {} : { [devLiveBroadcast.id]: { near: true, volume: 0.8 } },
+  widgetServerEnabled: true,
+  widgetCommand: 'radiohud',
+  widgetEditing: false,
+  admin: { data: null, loading: false, error: null, tab: 'live', fetchedAt: 0 },
+  confirm: null,
+  banDraft: null,
 })
 
 watch(
@@ -180,8 +224,8 @@ function toClientPlaylist(row: any): Playlist {
     isDefault: !!row.is_default,
     ownerIdentifier: row.owner_identifier,
     ownerName: row.owner_name ?? row.owner_identifier,
-    collaborators: (row.collaborators ?? []).map((c: any) => ({ identifier: c.identifier, name: c.name ?? c.identifier })),
-    songIds: (row.tracks ?? []).map((t: any) => t.song_id),
+    collaborators: asArray<any>(row.collaborators).map((c: any) => ({ identifier: c.identifier, name: c.name ?? c.identifier })),
+    songIds: asArray<any>(row.tracks).map((t: any) => t.song_id),
   }
 }
 
@@ -213,12 +257,79 @@ const anyModalOpen = computed(
     state.inviteePlaylistId != null ||
     state.deletePlaylistId != null ||
     state.settingsOpen ||
-    state.shortcutsOpen,
+    state.shortcutsOpen ||
+    state.confirm != null ||
+    state.banDraft != null,
 )
 
 const sleepRemaining = computed(() =>
   state.sleepEndsAt ? Math.max(0, Math.round((state.sleepEndsAt - state.now) / 1000)) : null,
 )
+
+// ─── Bans / nearby widget ──────────────────────────────────────────────────
+
+// The player's ban, if it covers the radio they have open right now.
+const activeBan = computed<RadioBan | null>(() => {
+  const ban = state.ban
+  if (!ban) return null
+  if (ban.expires_at && ban.expires_at * 1000 <= state.now) return null
+  if (ban.scope === 'all' || state.contextKind === 'dj') return ban
+  return null
+})
+
+// Stops an action before it reaches the server with a reason the player can act on (the server
+// rejects it regardless).
+function playBlocked(): boolean {
+  if (isNuiEnv && state.contextKind == null) {
+    toast('Open your radio (or a DJ booth) to play music', 'radio')
+    return true
+  }
+  if (activeBan.value) {
+    toast(activeBan.value.scope === 'all' ? 'You’re banned from using the radio' : 'You’re banned from DJ booths', 'ban', 'danger')
+    return true
+  }
+  return false
+}
+
+function liveProgress(b: LiveBroadcast) {
+  if (!b.playing) return b.progress
+  const p = b.progress + (state.now - b.syncedAt) / 1000
+  return b.song.duration ? Math.min(b.song.duration, p) : p
+}
+
+// What the nearby widget shows: the loudest broadcast we're in range of (playing beats paused),
+// DJ booths only unless the player chose "all radios". Never your own personal radio.
+const widgetBroadcast = computed<LiveBroadcast | null>(() => {
+  let best: LiveBroadcast | null = null
+  let bestScore = -1
+  for (const b of Object.values(state.live)) {
+    const p = state.proximity[b.id]
+    if (!p?.near) continue
+    if (settings.widgetScope === 'dj' && b.kind !== 'dj') continue
+    if (b.kind === 'radio' && state.serverId != null && b.owner === state.serverId) continue
+    const score = p.volume + (b.playing ? 1 : 0)
+    if (score > bestScore) {
+      best = b
+      bestScore = score
+    }
+  }
+  return best
+})
+
+function startWidgetEditing() {
+  state.settingsOpen = false
+  state.menu = null
+  state.widgetEditing = true
+}
+
+function finishWidgetEditing(reopenSettings = true) {
+  state.widgetEditing = false
+  if (reopenSettings) state.settingsOpen = true
+}
+
+function askConfirm(c: Omit<ConfirmState, 'tone' | 'icon'> & Partial<Pick<ConfirmState, 'tone' | 'icon'>>) {
+  state.confirm = { tone: 'default', icon: 'alert', ...c }
+}
 
 function formatTime(sec: number): string {
   const total = Math.max(0, Math.floor(sec))
@@ -292,6 +403,7 @@ function syncCurrentPlayback() {
 }
 
 function playSong(song: Song, context?: Song[], from: PlayingFrom | null = null) {
+  if (playBlocked()) return
   state.playingFrom = from
   const list = context && context.length ? context : [song]
   const idx = Math.max(
@@ -329,7 +441,7 @@ function playList(list: Song[], from: PlayingFrom | null, opts: { shuffle?: bool
 
 function togglePlay() {
   const song = currentSong.value
-  if (!song) return
+  if (!song || playBlocked()) return
   state.isPlaying = !state.isPlaying
   fetchNui('togglePlay', {})
 }
@@ -432,19 +544,21 @@ function cycleRepeat(announce = false) {
 // ─── Queue ─────────────────────────────────────────────────────────────────
 
 function addToQueue(song: Song) {
+  if (playBlocked()) return
   if (isShared()) fetchNui('enqueue', { song })
   else state.queue.push({ qid: nextQid(), songId: song.id, order: 1e6 + qidSeq })
   toast(`Added “${song.title}” to queue`, 'list-plus')
 }
 
 function addAllToQueue(list: Song[], label: string) {
-  if (!list.length) return
+  if (!list.length || playBlocked()) return
   if (isShared()) for (const song of list) fetchNui('enqueue', { song })
   else for (const song of list) state.queue.push({ qid: nextQid(), songId: song.id, order: 1e6 + qidSeq })
   toast(`Added ${list.length} songs from ${label} to queue`, 'list-plus')
 }
 
 function playNext(song: Song) {
+  if (playBlocked()) return
   if (isShared()) fetchNui('enqueueNext', { song })
   else {
     const order = (currentEntry.value?.order ?? 0) + 0.5
@@ -501,7 +615,7 @@ function clearUpNext() {
 function jumpTo(qid: string) {
   const idx = state.queue.findIndex((e) => e.qid === qid)
   const song = songById(state.queue[idx]?.songId)
-  if (idx === -1 || !song) return
+  if (idx === -1 || !song || playBlocked()) return
 
   if (isShared()) {
     const rest = state.queue
@@ -720,7 +834,7 @@ async function acceptInvite(playlistId: PlaylistId) {
   const row = await fetchNui<any>('acceptInvite', { playlistId })
   state.invites = state.invites.filter((i) => i.playlistId !== playlistId)
   if (row) {
-    for (const t of row.tracks || []) upsertSong(toClientSong(t))
+    for (const t of asArray<any>(row.tracks)) upsertSong(toClientSong(t))
     if (!state.playlists.some((p) => p.id === row.id)) state.playlists.push(toClientPlaylist(row))
   }
   if (invite) toast(`Joined “${invite.name}”`, 'users')
@@ -757,10 +871,174 @@ function closeMenu() {
   state.menu = null
 }
 
+// ─── Admin panel ───────────────────────────────────────────────────────────
+
+function normalizeAdmin(d: any): AdminData {
+  const song = (s: any): Song | null => (s && s.songId ? songFromBroadcast(s) : null)
+  return {
+    now: d.now ?? Math.floor(Date.now() / 1000),
+    me: d.me,
+    nearbyRadius: d.nearbyRadius ?? 50,
+    broadcasts: asArray<any>(d.broadcasts)
+      .map((b) => ({ ...b, song: song(b.song) }))
+      .filter((b) => b.song) as AdminBroadcast[],
+    stations: asArray<any>(d.stations).map((s) => ({ ...s, song: song(s.song) })) as AdminStation[],
+    bans: asArray<AdminBan>(d.bans),
+    players: asArray(d.players),
+    activity: asArray(d.activity),
+  }
+}
+
+async function fetchAdmin(silent = false) {
+  if (!silent) state.admin.loading = true
+  try {
+    const d = await fetchNui<any>('adminGetData', {})
+    if (!d) {
+      state.admin.error = 'You don’t have access to the admin panel.'
+      state.isAdmin = false
+      return
+    }
+    state.admin.data = normalizeAdmin(d)
+    state.admin.error = null
+    state.admin.fetchedAt = Date.now()
+  } catch {
+    state.admin.error = 'Couldn’t load admin data. Retrying…'
+  } finally {
+    state.admin.loading = false
+  }
+}
+
+// Live refresh while the admin view is on screen.
+let adminTimer: ReturnType<typeof setInterval> | null = null
+watch(
+  () => state.visible && state.view === 'admin' && state.isAdmin,
+  (on) => {
+    if (adminTimer) clearInterval(adminTimer)
+    adminTimer = null
+    if (!on) return
+    fetchAdmin()
+    adminTimer = setInterval(() => fetchAdmin(true), 4000)
+  },
+  { immediate: true },
+)
+
+const where = (c: { street?: string | null; label?: string }) => c.street || c.label || 'that spot'
+
+async function adminStop(b: AdminBroadcast) {
+  if (await fetchNui('adminStop', { id: b.id })) toast(`Stopped “${b.song.title}” on ${b.label}`, 'stop')
+  fetchAdmin(true)
+}
+
+function adminStopNear() {
+  const radius = state.admin.data?.nearbyRadius ?? 50
+  askConfirm({
+    title: 'Stop music near you?',
+    message: `Every radio and DJ booth within ${radius} m of you will stop playing. Their owners get a notification.`,
+    confirmLabel: 'Stop nearby music',
+    tone: 'danger',
+    icon: 'stop',
+    onConfirm: async () => {
+      const n = await fetchNui<number>('adminStopNear', { radius })
+      toast(n ? `Stopped ${n} radio${n === 1 ? '' : 's'} near you` : 'Nothing was playing near you', 'stop')
+      fetchAdmin(true)
+    },
+  })
+}
+
+function adminStopAll() {
+  const n = state.admin.data?.broadcasts.length ?? 0
+  askConfirm({
+    title: 'Stop all music?',
+    message: `This stops all ${n} radio${n === 1 ? '' : 's'} on the server, including every DJ booth. Use it for emergencies or server events.`,
+    confirmLabel: 'Stop everything',
+    tone: 'danger',
+    icon: 'stop',
+    onConfirm: async () => {
+      const stopped = await fetchNui<number>('adminStopAll', {})
+      toast(`Stopped ${stopped ?? 0} radio${stopped === 1 ? '' : 's'}`, 'stop', 'danger')
+      fetchAdmin(true)
+    },
+  })
+}
+
+async function adminWaypoint(coords: Coords | null | undefined, label: string) {
+  if (!coords) return
+  if (await fetchNui('adminWaypoint', { coords })) toast(`Waypoint set: ${label}`, 'map-pin')
+}
+
+function adminTeleport(coords: Coords | null | undefined) {
+  if (coords) fetchNui('adminTeleport', { coords })
+}
+
+async function adminRenameStation(s: AdminStation, label: string) {
+  const clean = label.trim().slice(0, 64)
+  if (!clean || clean === s.label) return
+  if (await fetchNui('adminRenameStation', { id: s.id, label: clean })) {
+    s.label = clean
+    toast(`Renamed booth to “${clean}”`, 'edit-2')
+  }
+  fetchAdmin(true)
+}
+
+function adminRemoveStation(s: AdminStation) {
+  askConfirm({
+    title: `Remove “${s.label}”?`,
+    message: `The booth at ${where(s)} disappears for everyone${s.playing ? ' and its music stops' : ''}. This can’t be undone.`,
+    confirmLabel: 'Remove booth',
+    tone: 'danger',
+    icon: 'trash-2',
+    onConfirm: async () => {
+      if (await fetchNui('adminRemoveStation', { id: s.id })) toast(`Removed “${s.label}”`, 'trash-2', 'danger')
+      fetchAdmin(true)
+    },
+  })
+}
+
+function adminPlaceStation() {
+  fetchNui('adminPlaceStation', {})
+}
+
+async function adminBan(payload: {
+  targetId?: number
+  identifier?: string
+  name?: string
+  scope: 'dj' | 'all'
+  minutes: number | null
+  reason: string
+  stopNow: boolean
+}): Promise<string | null> {
+  const res = await fetchNui<{ ok: boolean; err?: string; stopped?: number }>('adminBan', payload)
+  if (!res?.ok) {
+    const reasons: Record<string, string> = {
+      self: 'You can’t ban yourself.',
+      no_player: 'That player couldn’t be found.',
+      no_permission: 'You don’t have permission to ban.',
+    }
+    return reasons[res?.err ?? ''] ?? 'The ban didn’t go through. Try again.'
+  }
+  toast(
+    `${payload.name ?? 'Player'} banned from ${payload.scope === 'all' ? 'all radios' : 'DJ booths'}` +
+      (res.stopped ? ` · stopped ${res.stopped} radio${res.stopped === 1 ? '' : 's'}` : ''),
+    'ban',
+    'danger',
+  )
+  state.banDraft = null
+  fetchAdmin(true)
+  return null
+}
+
+async function adminUnban(ban: AdminBan) {
+  if (await fetchNui('adminUnban', { identifier: ban.identifier })) toast(`Unbanned ${ban.name || ban.identifier}`, 'unlock')
+  fetchAdmin(true)
+}
+
 // Escape peels off the topmost layer first; only with nothing left open does it close the radio.
 function dismissTopLayer(): boolean {
-  if (state.menu) state.menu = null
+  if (state.widgetEditing) finishWidgetEditing()
+  else if (state.menu) state.menu = null
   else if (state.popover) state.popover = null
+  else if (state.confirm) state.confirm = null
+  else if (state.banDraft) state.banDraft = null
   else if (state.deletePlaylistId != null) state.deletePlaylistId = null
   else if (state.editPlaylistId != null) state.editPlaylistId = null
   else if (state.inviteePlaylistId != null) state.inviteePlaylistId = null
@@ -857,38 +1135,43 @@ async function hydrate() {
   state.identifier = data.identifier
   state.myName = data.name
 
-  for (const pl of data.playlists || []) {
-    for (const t of pl.tracks || []) upsertSong(toClientSong(t))
+  for (const pl of asArray<any>(data.playlists)) {
+    for (const t of asArray<any>(pl.tracks)) upsertSong(toClientSong(t))
   }
-  for (const row of data.favorites || []) upsertSong(toClientSong(row))
-  for (const row of data.recent || []) upsertSong(toClientSong(row))
+  for (const row of asArray<any>(data.favorites)) upsertSong(toClientSong(row))
+  for (const row of asArray<any>(data.recent)) upsertSong(toClientSong(row))
 
   const favPlaylist: Playlist = {
     id: 'favorites',
     name: 'Liked Songs',
     cover: null,
     hue: 335,
-    songIds: (data.favorites || []).map((r: any) => r.song_id),
+    songIds: asArray<any>(data.favorites).map((r: any) => r.song_id),
     ownerIdentifier: state.identifier,
     ownerName: state.myName,
     collaborators: [],
     isDefault: true,
   }
-  state.playlists = [favPlaylist, ...(data.playlists || []).map(toClientPlaylist)]
-  state.recentlyPlayedIds = (data.recent || []).map((r: any) => r.song_id)
-  state.invites = (data.invites || []).map((row: any) => ({
+  state.playlists = [favPlaylist, ...asArray<any>(data.playlists).map(toClientPlaylist)]
+  state.recentlyPlayedIds = asArray<any>(data.recent).map((r: any) => r.song_id)
+  state.invites = asArray<any>(data.invites).map((row: any) => ({
     playlistId: row.playlist_id,
     name: row.name,
     hue: row.hue,
     invitedBy: row.invited_by,
     invitedByName: row.invited_by_name,
   }))
+  state.isAdmin = !!data.isAdmin
+  state.ban = data.ban ?? null
+
+  // Opened with no radio bound (admin panel only): leave whatever is playing untouched.
+  if (state.contextKind == null) return
 
   if (data.broadcast) {
     const song = songFromBroadcast(data.broadcast.song)
     upsertSong(song)
     if (isShared()) {
-      const queueSongs = (data.broadcast.queue || []).map(songFromBroadcast)
+      const queueSongs = asArray<any>(data.broadcast.queue).map(songFromBroadcast)
       for (const s of queueSongs) upsertSong(s)
       state.queue = [
         { qid: 'current', songId: song.id, order: 0 },
@@ -916,6 +1199,25 @@ const knownPlaying: Record<string, boolean> = {}
 function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
   const incoming = data.broadcasts || {}
   const incomingIds = new Set(Object.keys(incoming))
+
+  // Everything on the server, for the nearby widget (which radio you're in range of comes
+  // separately, via the `volume` messages).
+  const live: Record<string, LiveBroadcast> = {}
+  for (const [id, b] of Object.entries(incoming)) {
+    if (!b.song?.videoId) continue
+    live[id] = {
+      id,
+      kind: b.kind,
+      label: b.label ?? (b.kind === 'dj' ? 'DJ booth' : b.kind === 'radiocar' ? 'Car radio' : 'Personal radio'),
+      owner: b.owner,
+      song: songFromBroadcast(b.song),
+      playing: !!b.playing,
+      progress: b.progress || 0,
+      syncedAt: Date.now(),
+    }
+  }
+  state.live = live
+  for (const id of Object.keys(state.proximity)) if (!incomingIds.has(id)) delete state.proximity[id]
 
   for (const id of Object.keys(knownVideo)) {
     if (!incomingIds.has(id)) {
@@ -946,7 +1248,7 @@ function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
       if (isShared()) {
         const current = songFromBroadcast(b.song)
         upsertSong(current)
-        const queueSongs = (b.queue || []).map(songFromBroadcast)
+        const queueSongs = asArray<any>(b.queue).map(songFromBroadcast)
         for (const s of queueSongs) upsertSong(s)
         state.queue = [
           { qid: 'current', songId: current.id, order: 0 },
@@ -961,9 +1263,21 @@ function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
 function bindNui() {
   if (!isNuiEnv) return
 
+  // The widget lives outside the panel, so it needs these before the radio is ever opened.
+  fetchNui<any>('getConfig', {})
+    .then((c) => {
+      if (!c) return
+      state.widgetServerEnabled = c.widget !== false
+      if (c.widgetCommand) state.widgetCommand = c.widgetCommand
+      if (c.serverId != null) state.serverId = c.serverId
+    })
+    .catch(() => {})
+
   onNuiMessage('open', (data) => {
     state.visible = true
-    myBroadcastId = data.context?.id ?? null
+    // No context = admin panel opened somewhere the radio isn't allowed; keep the old binding so
+    // a personal radio that's still playing stays in sync.
+    if (data.context) myBroadcastId = data.context.id
     state.contextKind = data.context?.kind ?? null
     // Shared broadcasts (dj/radiocar) advance server-side only - every viewer's own "song ended"
     // firing a local advance would race and skip multiple tracks at once.
@@ -972,6 +1286,7 @@ function bindNui() {
         if (state.contextKind === 'radio') advance(true)
       })
     }
+    if (data.view === 'admin') setView('admin')
     hydrate()
   })
 
@@ -979,12 +1294,23 @@ function bindNui() {
     state.visible = false
     state.menu = null
     state.popover = null
+    state.widgetEditing = false
   })
 
   onNuiMessage('broadcastSync', handleBroadcastSync)
 
   onNuiMessage('volume', (data) => {
     audioEngine.setVolume(data.id, data.volume)
+    state.proximity[data.id] = { near: data.near ?? data.volume > 0, volume: data.volume }
+  })
+
+  onNuiMessage('banned', (data) => {
+    state.ban = data.ban ?? null
+  })
+
+  onNuiMessage('widgetToggle', () => {
+    settings.widget = !settings.widget
+    fetchNui('widgetToggled', { enabled: settings.widget })
   })
 
   onNuiMessage('inviteReceived', (data) => {
@@ -1067,5 +1393,24 @@ export const store = {
   dismissToast,
   songById,
   bindNui,
+  // nearby widget / bans
+  activeBan,
+  widgetBroadcast,
+  liveProgress,
+  startWidgetEditing,
+  finishWidgetEditing,
+  askConfirm,
+  // admin
+  fetchAdmin,
+  adminStop,
+  adminStopNear,
+  adminStopAll,
+  adminWaypoint,
+  adminTeleport,
+  adminRenameStation,
+  adminRemoveStation,
+  adminPlaceStation,
+  adminBan,
+  adminUnban,
   close: () => fetchNui('close', {}),
 }

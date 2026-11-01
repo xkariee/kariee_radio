@@ -24,7 +24,12 @@ lib.callback.register('kariee_radio:dj:getAll', function(_source)
 end)
 
 lib.callback.register('kariee_radio:dj:create', function(source, pos, heading, label)
-    if not hasDjPermission(source) then return nil, 'no_permission' end
+    if not hasDjPermission(source) and not IsRadioAdmin(source) then return nil, 'no_permission' end
+    local ban = GetRadioBan(source, 'dj')
+    if ban then
+        NotifyRadioBan(source, ban)
+        return nil, 'banned'
+    end
     local identifier = GetIdentifier(source)
     if not identifier or type(pos) ~= 'table' then return nil end
 
@@ -41,18 +46,23 @@ lib.callback.register('kariee_radio:dj:create', function(source, pos, heading, l
         pos_y = pos.y,
         pos_z = pos.z,
         heading = tonumber(heading) or 0.0,
+        created_at = os.time() * 1000, -- same ms-epoch shape oxmysql returns for TIMESTAMP columns
     }
     DjStations[id] = station
 
     TriggerClientEvent('kariee_radio:dj:created', -1, station)
+    LogRadioActivity(source, 'booth_created', ('Placed booth #%d “%s”'):format(id, station.label))
     return station
 end)
 
-lib.callback.register('kariee_radio:dj:remove', function(source, stationId)
-    local identifier = GetIdentifier(source)
+---Deletes a station everywhere (DB, every client's prop, its broadcast). Shared by /removedj and
+---the admin panel.
+---@param stationId number
+---@param source number|nil who removed it, for the activity log
+---@return boolean
+function RemoveDjStation(stationId, source)
     local station = DjStations[stationId]
-    if not identifier or not station then return false end
-    if station.owner_identifier ~= identifier and not hasDjPermission(source) then return false end
+    if not station then return false end
 
     MySQL.update.await('DELETE FROM radio_dj_stations WHERE id = ?', { stationId })
     DjStations[stationId] = nil
@@ -64,5 +74,16 @@ lib.callback.register('kariee_radio:dj:remove', function(source, stationId)
     end
 
     TriggerClientEvent('kariee_radio:dj:removed', -1, stationId)
+    LogRadioActivity(source, 'booth_removed', ('Removed booth #%d “%s”'):format(stationId, station.label or 'DJ booth'))
     return true
+end
+
+lib.callback.register('kariee_radio:dj:remove', function(source, stationId)
+    local identifier = GetIdentifier(source)
+    local station = DjStations[stationId]
+    if not identifier or not station then return false end
+    if station.owner_identifier ~= identifier and not hasDjPermission(source) and not IsRadioAdmin(source) then
+        return false
+    end
+    return RemoveDjStation(stationId, source)
 end)
