@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS `radio_dj_stations` (
   `pos_y` FLOAT NOT NULL,
   `pos_z` FLOAT NOT NULL,
   `heading` FLOAT NOT NULL DEFAULT 0,
+  -- creator setup (console mode, sound area, disco lights) as JSON; added automatically on start
+  `settings` LONGTEXT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_owner` (`owner_identifier`)

@@ -50,11 +50,51 @@ Config.DjPermission = 'group.admin'
 
 -- Placement tool tuning
 Config.Placement = {
-    maxDistance = 10.0,  -- how far in front of the camera the ghost prop can be placed
+    maxDistance = 10.0,  -- how far in front of the camera the console / interaction box can be placed
+    farDistance = 40.0,  -- how far you can aim when drawing a sound area or placing lights
     rotateStep = 2.5,    -- degrees per tick while holding left/right
     heightStep = 0.02,   -- metres per tick while holding up/down
     interactRange = 5.0, -- how close you need to be to a station for /dj and /removedj
     targetDistance = 2.0, -- ox_target interaction range on the spawned DJ mixer prop
+}
+
+-- Console props the creator (/createdj) cycles through with [M]. Models that don't exist in your
+-- game build are skipped automatically, so add your own (e.g. from an MLO) freely.
+Config.DjModels = {
+    'prop_dj_deck_02',
+    'prop_dj_deck_01',
+    'ba_prop_battle_dj_stand',
+}
+
+-- Limits for the "Sound" step of the creator.
+Config.DjSound = {
+    minRadius = 10.0,      -- outdoor radius
+    maxRadius = 300.0,
+    maxMuffled = 120.0,    -- how far outside its interior an indoor booth can still be heard (muffled)
+    defaultMuffled = 15.0,
+    maxAreaPoints = 24,    -- corners of a custom sound area
+    defaultAreaHeight = 8.0,
+    defaultAreaFade = 25.0, -- metres outside a custom area over which the music fades out
+}
+
+-- Disco lights attached to DJ booths (placed in the creator's "Lights" step). They're drawn by
+-- every nearby client while the booth is playing - no props, so nothing to stream or collide with.
+Config.DiscoLights = {
+    enabled = true,
+    maxPerBooth = 10,
+    drawDistance = 80.0, -- also drawn within this many metres of the booth, even outside its sound area
+    bpm = 124,           -- beat the strobes/pulses follow
+    colors = {
+        { name = 'Rainbow', rgb = false },
+        { name = 'Red', rgb = { 255, 40, 70 } },
+        { name = 'Pink', rgb = { 255, 70, 190 } },
+        { name = 'Purple', rgb = { 160, 70, 255 } },
+        { name = 'Blue', rgb = { 50, 110, 255 } },
+        { name = 'Cyan', rgb = { 40, 230, 255 } },
+        { name = 'Green', rgb = { 60, 255, 110 } },
+        { name = 'Yellow', rgb = { 255, 220, 40 } },
+        { name = 'White', rgb = { 255, 255, 255 } },
+    },
 }
 
 -- ─── Car radio (F6, while in a vehicle) ─────────────────────────────────────
@@ -103,4 +143,6 @@ Config.Messages = {
     unbanned = 'Your radio ban was lifted.',
     widget_on = 'Now playing widget shown.',
     widget_off = 'Now playing widget hidden. Use /radiohud to bring it back.',
+    creator_saved = 'DJ booth saved.',
+    creator_updated = 'DJ booth updated.',
 }

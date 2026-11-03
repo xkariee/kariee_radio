@@ -134,16 +134,19 @@ export function devAdminData() {
         id: 1, label: 'DJ booth · Vinewood Blvd', ownerIdentifier: 'char1:drex', ownerName: 'Drex Monroe',
         createdAt: Date.now() - 9 * 86400_000, broadcastId: 'dj:1', playing: true, song: toServerSong(songs[6]),
         coords: { x: 120, y: -1280, z: 29 }, street: 'Vinewood Blvd', zone: 'Downtown Vinewood', distance: 34, interior: true,
+        setup: { mode: 'entity', audio: 'interior', muffled: 25, areaPoints: 0, lights: 6 },
       },
       {
         id: 2, label: 'Bahama Mamas main room', ownerIdentifier: 'dev:local', ownerName: 'Kariee',
         createdAt: Date.now() - 30 * 86400_000, broadcastId: 'dj:2', playing: false, song: null,
         coords: { x: -1390, y: -600, z: 30 }, street: 'Marathon Ave', zone: 'Del Perro', distance: 1410, interior: true,
+        setup: { mode: 'prop', audio: 'auto', areaPoints: 0, lights: 0 },
       },
       {
         id: 3, label: 'DJ booth · Del Perro Pier', ownerIdentifier: 'char1:lena', ownerName: 'Lena Voss',
         createdAt: Date.now() - 2 * 86400_000, broadcastId: 'dj:3', playing: false, song: toServerSong(songs[10]),
         coords: { x: -1600, y: -1000, z: 13 }, street: 'Del Perro Pier', zone: 'Del Perro Beach', distance: 1890, interior: false,
+        setup: { mode: 'zone', audio: 'area', areaPoints: 6, lights: 4 },
       },
     ],
     bans: [

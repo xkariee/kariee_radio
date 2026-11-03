@@ -23,6 +23,7 @@ const GROUP: Record<string, Filter> = {
   booth_created: 'booths',
   booth_removed: 'booths',
   booth_renamed: 'booths',
+  booth_edited: 'booths',
 }
 
 const META: Record<string, { icon: string; verb: string; tone: string }> = {
@@ -35,6 +36,7 @@ const META: Record<string, { icon: string; verb: string; tone: string }> = {
   booth_created: { icon: 'plus', verb: 'placed a booth', tone: 'booth' },
   booth_removed: { icon: 'trash-2', verb: 'removed a booth', tone: 'danger' },
   booth_renamed: { icon: 'edit-2', verb: 'renamed a booth', tone: 'booth' },
+  booth_edited: { icon: 'sparkles', verb: 'edited a booth', tone: 'booth' },
 }
 
 const meta = (a: AdminActivity) => META[a.action] ?? { icon: 'activity', verb: a.action, tone: 'admin' }

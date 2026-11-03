@@ -152,6 +152,28 @@ export interface AdminStation extends Located {
   broadcastId: string
   playing: boolean
   song: Song | null
+  setup?: {
+    mode: 'prop' | 'entity' | 'zone'
+    audio: 'interior' | 'radius' | 'area' | 'auto'
+    range?: number
+    muffled?: number
+    areaPoints: number
+    lights: number
+  }
+}
+
+// Pushed by client/creator.lua while the DJ booth creator is running (null = hidden).
+export interface CreatorHud {
+  editing: boolean
+  label?: string
+  step: number
+  steps: string[]
+  title: string
+  subtitle?: string
+  options: { label: string; active: boolean }[]
+  info: { label: string; value: string; swatch?: number[] | 'rainbow' }[]
+  keys: { keys: string[]; label: string }[]
+  warning?: string | null
 }
 
 export interface AdminBan {

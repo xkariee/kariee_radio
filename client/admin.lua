@@ -104,6 +104,17 @@ RegisterNUICallback('adminTeleport', function(d, cb)
     end)
 end)
 
+RegisterNUICallback('adminEditStation', function(d, cb)
+    local station = isAdmin and DjStations[tonumber(d.id)]
+    if not station then
+        cb(false)
+        return
+    end
+    cb(true)
+    CloseRadio()
+    StartDjCreator(station)
+end)
+
 RegisterNUICallback('adminPlaceStation', function(_, cb)
     if not isAdmin then
         cb(false)

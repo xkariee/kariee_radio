@@ -37,6 +37,7 @@ const devResponses: Record<string, (data: any) => unknown> = {
   adminWaypoint: () => true,
   adminRenameStation: () => true,
   adminRemoveStation: () => true,
+  adminEditStation: () => true,
   adminUnban: () => true,
   adminBan: () => ({ ok: true, stopped: 1 }),
 }

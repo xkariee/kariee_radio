@@ -55,7 +55,20 @@ RegisterNetEvent('kariee_radio:broadcast:sync', function(payload)
     updateBackProp(mine ~= nil and mine.playing == true)
 end)
 
----@return vector3|nil sourcePos, boolean muffled, boolean bypassFadeFullVolume, number range
+---Whether a broadcast is currently playing / whether this client is inside its hearing area
+---(used by client/lights.lua so disco lights only run while there's music to dance to).
+function IsBroadcastPlaying(id)
+    local b = broadcasts[id]
+    return b ~= nil and b.playing == true
+end
+
+function IsBroadcastNear(id)
+    return lastNear[id] == true
+end
+
+---@return vector3|nil sourcePos, boolean muffled, boolean bypassFadeFullVolume, number range, number|nil distance
+---`distance` overrides the straight-line distance to sourcePos (custom sound areas measure from
+---the area's edge instead).
 local function resolve(b, myPed, myCoords)
     if b.kind == 'radio' then
         local targetPlayer = GetPlayerFromServerId(b.owner)
@@ -74,20 +87,27 @@ local function resolve(b, myPed, myCoords)
         if station.interiorId == nil then
             station.interiorId = GetInteriorAtCoords(sourcePos.x, sourcePos.y, sourcePos.z)
         end
+        local audio = DjAudioOf(station)
 
-        if station.interiorId == 0 then
-            -- Placed outdoors: no room to fill, but an open-air rig carries much further.
-            return sourcePos, false, false, Config.DjOutdoorRange
+        -- Custom area drawn in the creator: full volume anywhere inside it, fading out over
+        -- `fade` metres beyond its edge.
+        if audio.type == 'area' then
+            local inside, outside = DjAreaDistance(audio, myCoords)
+            if inside then return sourcePos, false, true, audio.fade end
+            return sourcePos, false, false, math.max(0.1, audio.fade), outside
         end
 
-        -- Standing in the same room as the console: it fills the whole interior evenly, distance
-        -- doesn't matter. Only once you leave that interior does range/muffle start counting.
-        if GetInteriorFromEntity(myPed) == station.interiorId then
-            return sourcePos, false, true, Config.MaxRange
+        if audio.type == 'interior' and station.interiorId ~= 0 then
+            -- Standing in the same interior as the console: it fills the whole place evenly,
+            -- distance doesn't matter. Outside it, it's heard muffled up to `muffled` metres.
+            if GetInteriorFromEntity(myPed) == station.interiorId then
+                return sourcePos, false, true, audio.muffled
+            end
+            return sourcePos, true, false, audio.muffled
         end
 
-        local muffled = GetInteriorFromEntity(myPed) ~= station.interiorId
-        return sourcePos, muffled, false, Config.MaxRange
+        -- Radius (outdoor default): an open-air rig carries much further than a personal radio.
+        return sourcePos, false, false, audio.range or Config.DjOutdoorRange
     end
 
     if b.kind == 'radiocar' then
@@ -123,10 +143,10 @@ CreateThread(function()
             local volume = 0
             local near = false
 
-            local sourcePos, muffled, bypass, range = resolve(b, myPed, myCoords)
+            local sourcePos, muffled, bypass, range, distOverride = resolve(b, myPed, myCoords)
             if sourcePos then
                 range = range or Config.MaxRange
-                local distance = bypass and 0 or #(myCoords - sourcePos)
+                local distance = bypass and 0 or (distOverride or #(myCoords - sourcePos))
                 near = bypass or distance < range
 
                 if b.playing then
