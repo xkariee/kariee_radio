@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-// Styled replacement for <input type="color"> (whose native popup looks nothing like the radio):
-// a saturation/brightness area, a hue slider and a hex field. Works by mouse and keyboard.
 const model = defineModel<string>({ required: true })
 
 const h = ref(0)
@@ -39,8 +37,6 @@ function syncFrom(hex: string) {
   draft.value = hex.replace('#', '').toUpperCase()
 }
 
-// HSV is the source of truth while the picker is open (greys would otherwise lose their hue);
-// only resync from the model when it changes from outside (reset to defaults, etc.).
 watch(
   model,
   (hex) => {
@@ -56,7 +52,6 @@ function emit() {
   invalid.value = false
 }
 
-// ─── saturation / brightness area ───
 const area = ref<HTMLElement | null>(null)
 const dragging = ref(false)
 const clamp = (x: number) => Math.min(1, Math.max(0, x))
@@ -99,7 +94,6 @@ function onAreaKey(e: KeyboardEvent) {
   emit()
 }
 
-// ─── hue + hex ───
 function onHue(e: Event) {
   h.value = Number((e.target as HTMLInputElement).value)
   emit()

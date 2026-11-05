@@ -3,26 +3,23 @@ import { computed, ref } from 'vue'
 import type { AdminBan } from '../../types'
 import { store } from '../../store'
 import { colorForId } from '../../utils/avatar'
-import { relativeTime, shortDate, toMs } from '../../utils/format'
+import { matchesQuery, relativeTime, shortDate, toMs } from '../../utils/format'
 import Icon from '../Icon.vue'
 
 const { state } = store
 const data = computed(() => state.admin.data!)
 const q = ref('')
 
-const list = computed(() => {
-  const needle = q.value.trim().toLowerCase()
-  return [...data.value.bans]
-    .filter((b) => !needle || [b.name, b.identifier, b.reason, b.bannedBy].some((v) => v?.toLowerCase().includes(needle)))
-    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-})
+const list = computed(() =>
+  data.value.bans
+    .filter((b) => matchesQuery(q.value, [b.name, b.identifier, b.reason, b.bannedBy]))
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+)
 
 function expires(b: AdminBan) {
-  if (!b.expiresAt) return 'Permanent'
-  return `Ends ${relativeTime(b.expiresAt, state.now)}`
+  return b.expiresAt ? `Ends ${relativeTime(b.expiresAt, state.now)}` : 'Permanent'
 }
 
-// Rough "how much is left" bar for timed bans.
 function remainingPct(b: AdminBan) {
   const end = toMs(b.expiresAt)
   const start = toMs(b.createdAt)

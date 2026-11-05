@@ -1,49 +1,61 @@
 import type { Song } from '../types'
+import { hueFromId } from '../utils/avatar'
 
 const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined
+const API_URL = 'https://www.googleapis.com/youtube/v3'
 
 export const youtubeConfigured = !!API_KEY
 
-interface YoutubeSearchItem {
-  id?: { videoId?: string }
-  snippet: {
-    title: string
-    channelTitle: string
-    thumbnails?: { medium?: { url: string }; default?: { url: string } }
-  }
+interface Snippet {
+  title: string
+  channelTitle: string
+  thumbnails?: { medium?: { url: string }; default?: { url: string } }
 }
 
-interface YoutubeVideoItem {
+interface SearchItem {
+  id?: { videoId?: string }
+  snippet: Snippet
+}
+
+interface VideoItem {
   id: string
+  snippet?: Snippet
   contentDetails: { duration: string }
 }
 
+const ENTITIES: Record<string, string> = { '&amp;': '&', '&#39;': "'", '&quot;': '"', '&lt;': '<', '&gt;': '>' }
+
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+  return text.replace(/&(amp|#39|quot|lt|gt);/g, (entity) => ENTITIES[entity])
 }
 
 function parseIsoDuration(iso: string): number {
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
   if (!match) return 0
-  const hours = Number(match[1] ?? 0)
-  const minutes = Number(match[2] ?? 0)
-  const seconds = Number(match[3] ?? 0)
-  return hours * 3600 + minutes * 60 + seconds
+  const [, h = 0, m = 0, s = 0] = match
+  return Number(h) * 3600 + Number(m) * 60 + Number(s)
 }
 
-function hueFromId(id: string): number {
-  let hash = 0
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) % 360
-  return hash
+async function request<T>(endpoint: string, params: Record<string, string>): Promise<T> {
+  if (!API_KEY) throw new Error('missing-key')
+  const query = new URLSearchParams({ ...params, key: API_KEY })
+  const res = await fetch(`${API_URL}/${endpoint}?${query}`)
+  if (!res.ok) throw new Error(`YouTube ${endpoint} failed (${res.status})`)
+  return res.json()
 }
 
-// Accepts the usual share/watch URL shapes (youtube.com/watch, youtu.be, music.youtube.com,
-// shorts, embed) so a pasted link plays that exact video instead of running a text search.
+function toSong(videoId: string, snippet: Snippet, duration: number): Song {
+  return {
+    id: `yt:${videoId}`,
+    title: decodeEntities(snippet.title),
+    artist: decodeEntities(snippet.channelTitle),
+    duration,
+    hue: hueFromId(videoId),
+    videoId,
+    thumbnail: snippet.thumbnails?.medium?.url ?? snippet.thumbnails?.default?.url ?? null,
+  }
+}
+
 export function parseYouTubeId(query: string): string | null {
   const q = query.trim()
   const match =
@@ -51,61 +63,32 @@ export function parseYouTubeId(query: string): string | null {
   return match ? match[1] : null
 }
 
-interface YoutubeFullVideoItem extends YoutubeVideoItem {
-  snippet: YoutubeSearchItem['snippet']
-}
-
 export async function fetchVideoById(videoId: string): Promise<Song[]> {
-  if (!API_KEY) throw new Error('missing-key')
-
-  const url =
-    'https://www.googleapis.com/youtube/v3/videos' + `?part=snippet,contentDetails&id=${videoId}&key=${API_KEY}`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`YouTube lookup failed (${res.status})`)
-  const json: { items?: YoutubeFullVideoItem[] } = await res.json()
-
-  return (json.items ?? []).map((it) => ({
-    id: `yt:${it.id}`,
-    title: decodeEntities(it.snippet.title),
-    artist: decodeEntities(it.snippet.channelTitle),
-    duration: parseIsoDuration(it.contentDetails.duration),
-    hue: hueFromId(it.id),
-    videoId: it.id,
-    thumbnail: it.snippet.thumbnails?.medium?.url ?? it.snippet.thumbnails?.default?.url ?? null,
-  }))
+  const { items = [] } = await request<{ items?: VideoItem[] }>('videos', { part: 'snippet,contentDetails', id: videoId })
+  return items
+    .filter((item) => item.snippet)
+    .map((item) => toSong(item.id, item.snippet!, parseIsoDuration(item.contentDetails.duration)))
 }
 
 export async function searchYouTube(query: string): Promise<Song[]> {
-  if (!API_KEY) throw new Error('missing-key')
+  const { items = [] } = await request<{ items?: SearchItem[] }>('search', {
+    part: 'snippet',
+    type: 'video',
+    videoCategoryId: '10',
+    maxResults: '12',
+    q: query,
+  })
+  const found = items.filter((item) => item.id?.videoId)
+  if (!found.length) return []
 
-  const searchUrl =
-    'https://www.googleapis.com/youtube/v3/search' +
-    `?part=snippet&type=video&videoCategoryId=10&maxResults=12&q=${encodeURIComponent(query)}&key=${API_KEY}`
-  const searchRes = await fetch(searchUrl)
-  if (!searchRes.ok) throw new Error(`YouTube search failed (${searchRes.status})`)
-  const searchJson: { items?: YoutubeSearchItem[] } = await searchRes.json()
-  const items = (searchJson.items ?? []).filter((it) => it.id?.videoId)
-  const ids = items.map((it) => it.id!.videoId!) as string[]
-  if (!ids.length) return []
+  const ids = found.map((item) => item.id!.videoId!)
+  const details = await request<{ items?: VideoItem[] }>('videos', { part: 'contentDetails', id: ids.join(',') }).catch(
+    () => ({ items: [] as VideoItem[] }),
+  )
+  const durations = new Map((details.items ?? []).map((item) => [item.id, parseIsoDuration(item.contentDetails.duration)]))
 
-  const detailsUrl =
-    'https://www.googleapis.com/youtube/v3/videos' + `?part=contentDetails&id=${ids.join(',')}&key=${API_KEY}`
-  const detailsRes = await fetch(detailsUrl)
-  const detailsJson: { items?: YoutubeVideoItem[] } = detailsRes.ok ? await detailsRes.json() : {}
-  const durationById = new Map<string, number>()
-  for (const item of detailsJson.items ?? []) durationById.set(item.id, parseIsoDuration(item.contentDetails.duration))
-
-  return items.map((it) => {
-    const videoId = it.id!.videoId!
-    return {
-      id: `yt:${videoId}`,
-      title: decodeEntities(it.snippet.title),
-      artist: decodeEntities(it.snippet.channelTitle),
-      duration: durationById.get(videoId) ?? 0,
-      hue: hueFromId(videoId),
-      source: 'youtube',
-      videoId,
-      thumbnail: it.snippet.thumbnails?.medium?.url ?? it.snippet.thumbnails?.default?.url ?? null,
-    }
+  return found.map((item) => {
+    const videoId = item.id!.videoId!
+    return toSong(videoId, item.snippet, durations.get(videoId) ?? 0)
   })
 }

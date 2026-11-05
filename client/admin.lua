@@ -1,127 +1,85 @@
--- Client side of the admin panel: opens it, adds what only the client can work out (street
--- names, distance from you, interior or not) and runs local actions (waypoint, teleport,
--- placement tool). Everything that changes server state is re-checked server-side.
-
 local isAdmin = false
 
-local function refreshAdmin()
-    isAdmin = lib.callback.await('kariee_radio:admin:isAdmin', false) == true
+local function allowed()
     return isAdmin
 end
 
+local function toVector(coords)
+    return vector3(coords.x + 0.0, coords.y + 0.0, coords.z + 0.0)
+end
+
+local function enrich(item, origin)
+    if type(item.coords) ~= 'table' then return end
+    local coords = toVector(item.coords)
+    local zone = GetLabelText(GetNameOfZone(coords.x, coords.y, coords.z))
+    item.street = Utils:GetStreet(coords)
+    item.zone = zone ~= 'NULL' and zone or nil
+    item.distance = #(origin - coords)
+    item.interior = GetInteriorAtCoords(coords.x, coords.y, coords.z) ~= 0
+end
+
 RegisterCommand(Config.AdminCommand, function()
-    if not NetworkIsPlayerActive(PlayerId()) or not PlayerLoaded then
-        ESX.ShowNotification(Config.Messages.not_ready)
-        return
-    end
-    if not refreshAdmin() then
-        ESX.ShowNotification(Config.Messages.no_permission)
-        return
-    end
-    -- Bound to your radio when you could open one here; otherwise just the admin panel.
-    local context, reason = ResolveRadioContext()
-    OpenRadio(context, 'admin', reason and Config.Messages[reason])
+    if not Utils:IsReady() then return Utils:Notify('not_ready') end
+    isAdmin = Utils:Callback('admin:isAdmin') == true
+    if not isAdmin then return Utils:Notify('no_permission') end
+    OpenPlayerRadio('admin')
 end, false)
 
-local function locationOf(coords)
-    local street = GetStreetNameFromHashKey(GetStreetNameAtCoord(coords.x, coords.y, coords.z))
-    local zone = GetLabelText(GetNameOfZone(coords.x, coords.y, coords.z))
-    if zone == 'NULL' then zone = nil end
-    return street ~= '' and street or nil, zone
-end
-
-local function enrich(item, myCoords)
-    if type(item.coords) ~= 'table' then return end
-    local c = vector3(item.coords.x + 0.0, item.coords.y + 0.0, item.coords.z + 0.0)
-    item.street, item.zone = locationOf(c)
-    item.distance = #(myCoords - c)
-    item.interior = GetInteriorAtCoords(c.x, c.y, c.z) ~= 0
-end
-
 RegisterNUICallback('adminGetData', function(_, cb)
-    local data = lib.callback.await('kariee_radio:admin:getData', false)
-    if not data then
-        isAdmin = false
-        cb(nil)
-        return
-    end
-    isAdmin = true
-    local myCoords = GetEntityCoords(PlayerPedId())
-    for _, b in ipairs(data.broadcasts or {}) do enrich(b, myCoords) end
-    for _, s in ipairs(data.stations or {}) do enrich(s, myCoords) end
-    data.me = GetPlayerServerId(PlayerId())
+    local data = Utils:Callback('admin:getData')
+    isAdmin = type(data) == 'table'
+    if not isAdmin then return cb(nil) end
+    local origin = Utils:GetCoords()
+    for _, broadcast in ipairs(data.broadcasts or {}) do enrich(broadcast, origin) end
+    for _, station in ipairs(data.stations or {}) do enrich(station, origin) end
+    data.me = Utils.serverId
     cb(data)
 end)
 
-local function forward(name, remote, argsOf)
-    RegisterNUICallback(name, function(d, cb)
-        if not isAdmin then
-            cb(false)
-            return
-        end
-        cb(lib.callback.await(remote, false, table.unpack(argsOf(d or {}))))
-    end)
-end
+Utils:BindCallback('adminStop', 'admin:stop', { 'id' }, allowed)
+Utils:BindCallback('adminStopNear', 'admin:stopNear', { 'radius' }, allowed)
+Utils:BindCallback('adminStopAll', 'admin:stopAll', {}, allowed)
+Utils:BindCallback('adminRenameStation', 'admin:renameStation', { 'id', 'label' }, allowed)
+Utils:BindCallback('adminRemoveStation', 'admin:removeStation', { 'id' }, allowed)
+Utils:BindCallback('adminUnban', 'admin:unban', { 'identifier' }, allowed)
 
-forward('adminStop', 'kariee_radio:admin:stop', function(d) return { d.id } end)
-forward('adminStopNear', 'kariee_radio:admin:stopNear', function(d) return { d.radius } end)
-forward('adminStopAll', 'kariee_radio:admin:stopAll', function() return {} end)
-forward('adminRenameStation', 'kariee_radio:admin:renameStation', function(d) return { d.id, d.label } end)
-forward('adminRemoveStation', 'kariee_radio:admin:removeStation', function(d) return { d.id } end)
-forward('adminUnban', 'kariee_radio:admin:unban', function(d) return { d.identifier } end)
-
-RegisterNUICallback('adminBan', function(d, cb)
-    if not isAdmin then
-        cb({ ok = false, err = 'no_permission' })
-        return
-    end
-    local ok, extra = lib.callback.await('kariee_radio:admin:ban', false, d)
+RegisterNUICallback('adminBan', function(data, cb)
+    if not isAdmin then return cb({ ok = false, err = 'no_permission' }) end
+    local ok, extra = Utils:Callback('admin:ban', data)
     cb({ ok = ok == true, err = not ok and extra or nil, stopped = ok and extra or 0 })
 end)
 
-RegisterNUICallback('adminWaypoint', function(d, cb)
-    if not isAdmin or type(d.coords) ~= 'table' then
-        cb(false)
-        return
-    end
-    SetNewWaypoint(d.coords.x + 0.0, d.coords.y + 0.0)
+RegisterNUICallback('adminWaypoint', function(data, cb)
+    if not isAdmin or type(data.coords) ~= 'table' then return cb(false) end
+    SetNewWaypoint(data.coords.x + 0.0, data.coords.y + 0.0)
     cb(true)
 end)
 
-RegisterNUICallback('adminTeleport', function(d, cb)
-    if not isAdmin or type(d.coords) ~= 'table' then
-        cb(false)
-        return
-    end
+RegisterNUICallback('adminTeleport', function(data, cb)
+    if not isAdmin or type(data.coords) ~= 'table' then return cb(false) end
+    local coords = toVector(data.coords)
     cb(true)
     CloseRadio()
     CreateThread(function()
-        local ped = PlayerPedId()
         DoScreenFadeOut(250)
         while not IsScreenFadedOut() do Wait(0) end
-        SetEntityCoords(ped, d.coords.x + 0.0, d.coords.y + 0.0, d.coords.z + 0.5, false, false, false, false)
+        SetEntityCoords(Utils.ped, coords.x, coords.y, coords.z + 0.5, false, false, false, false)
         Wait(250)
         DoScreenFadeIn(350)
     end)
 end)
 
-RegisterNUICallback('adminEditStation', function(d, cb)
-    local station = isAdmin and DjStations[tonumber(d.id)]
-    if not station then
-        cb(false)
-        return
-    end
+RegisterNUICallback('adminEditStation', function(data, cb)
+    local station = isAdmin and DjStations[tonumber(data.id)]
+    if not station then return cb(false) end
     cb(true)
     CloseRadio()
     StartDjCreator(station)
 end)
 
 RegisterNUICallback('adminPlaceStation', function(_, cb)
-    if not isAdmin then
-        cb(false)
-        return
-    end
+    if not isAdmin then return cb(false) end
     cb(true)
     CloseRadio()
-    StartDjPlacement()
+    StartDjCreator()
 end)

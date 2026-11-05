@@ -30,9 +30,6 @@ function openMenu(e: MouseEvent) {
   store.openTrackMenu(props.song.id, anchorFrom(e), props.contextPlaylistId)
 }
 
-// Rows are one tab stop each; arrows move between them, Enter plays, and the row's other actions
-// live behind Shift+F10 / Menu. Letter keys stay global (L likes the *playing* song, Q opens the
-// queue) so they never mean something different depending on what last had focus.
 function onKey(e: KeyboardEvent) {
   const row = e.currentTarget as HTMLElement
   if (e.target !== row) return

@@ -1,4 +1,4 @@
-import { devAdminData } from '../data/mock'
+import { devAdminData, devPlayers } from '../data/mock'
 
 declare global {
   interface Window {
@@ -6,30 +6,28 @@ declare global {
   }
 }
 
+type MessageHandler = (data: any) => void
+
 export const isNuiEnv = typeof window.GetParentResourceName === 'function'
 
-const resourceName = isNuiEnv ? window.GetParentResourceName!() : 'kariee_radio'
+const resourceName = isNuiEnv ? window.GetParentResourceName!() : 'ax_radio'
+const listeners = new Map<string, Set<MessageHandler>>()
 
-// Plain-browser `npm run dev` has no game to answer callbacks - these stand in for the few
-// responses the UI actually reads, so playlist/invite flows can still be clicked through.
 const devResponses: Record<string, (data: any) => unknown> = {
-  createPlaylist: (d) => ({
+  createPlaylist: (data) => ({
     id: `dev-${Date.now()}`,
-    name: d.name,
-    cover: d.cover,
+    name: data.name,
+    cover: data.cover,
     hue: Math.floor(Math.random() * 360),
     owner_identifier: 'dev:local',
     owner_name: 'You',
     collaborators: [],
     tracks: [],
   }),
-  searchPlayers: (d) =>
-    [
-      { id: 12, name: 'Skyla Reyes' },
-      { id: 31, name: 'Drex Monroe' },
-      { id: 47, name: 'Mako Tanaka' },
-      { id: 58, name: 'Lena Voss' },
-    ].filter((p) => p.name.toLowerCase().includes(String(d.query ?? '').toLowerCase())),
+  searchPlayers: (data) => {
+    const query = String(data.query ?? '').toLowerCase()
+    return devPlayers.filter((player) => player.name.toLowerCase().includes(query))
+  },
   adminGetData: () => devAdminData(),
   adminStop: () => true,
   adminStopNear: () => 2,
@@ -45,16 +43,13 @@ const devResponses: Record<string, (data: any) => unknown> = {
 export async function fetchNui<T = any>(event: string, data: unknown = {}): Promise<T> {
   if (!isNuiEnv) return (devResponses[event]?.(data) ?? null) as T
 
-  const resp = await fetch(`https://${resourceName}/${event}`, {
+  const res = await fetch(`https://${resourceName}/${event}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=UTF-8' },
     body: JSON.stringify(data),
   })
-  return resp.json() as Promise<T>
+  return res.json() as Promise<T>
 }
-
-type MessageHandler = (data: any) => void
-const listeners = new Map<string, Set<MessageHandler>>()
 
 export function onNuiMessage(action: string, handler: MessageHandler): () => void {
   if (!listeners.has(action)) listeners.set(action, new Set())
@@ -64,6 +59,5 @@ export function onNuiMessage(action: string, handler: MessageHandler): () => voi
 
 window.addEventListener('message', (event: MessageEvent) => {
   const action = event.data?.action
-  if (!action) return
-  listeners.get(action)?.forEach((handler) => handler(event.data))
+  if (action) listeners.get(action)?.forEach((handler) => handler(event.data))
 })

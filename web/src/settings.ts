@@ -5,9 +5,7 @@ export type AccentChoice = 'adaptive' | 'custom' | 'rose' | 'mint' | 'teal' | 'v
 
 export interface Settings {
   accent: AccentChoice
-  // Hex the player picked for the 'custom' accent.
   customAccent: string
-  // User multiplier on top of the automatic resolution scale (1080p = 1.0).
   scale: number
   density: 'comfortable' | 'compact'
   reduceMotion: boolean
@@ -15,11 +13,9 @@ export interface Settings {
   ambient: boolean
   showRemaining: boolean
   nowPlayingPanel: boolean
-  // Nearby now-playing widget (shown in range of a DJ booth / inside its room)
   widget: boolean
   widgetScope: 'dj' | 'all'
   widgetSize: 'full' | 'compact'
-  // 0..1 across the free space on screen (0 = flush left/top, 1 = flush right/bottom)
   widgetX: number
   widgetY: number
 }
@@ -35,7 +31,6 @@ export const ACCENT_HUES: Record<Exclude<AccentChoice, 'adaptive' | 'custom'>, n
   sky: 204,
 }
 
-// Shown while nothing is playing in adaptive mode.
 export const DEFAULT_HUE = ACCENT_HUES.rose
 
 const prefersReducedMotion =
@@ -65,8 +60,6 @@ export function resetSettings() {
 }
 
 watch(settings, () => saveJson('settings', settings), { deep: true })
-
-// ─── Theme ─────────────────────────────────────────────────────────────────
 
 type Rgb = [number, number, number]
 
@@ -108,9 +101,6 @@ export function hexToHsl(value: string): [number, number, number] | null {
   return [h * 60, s, l]
 }
 
-// Darkest surface an accent ever sits on - every accent is lifted until it clears AA+ against it,
-// so song-driven hues (deep blues especially) or a too-dark custom pick never drop below
-// readable contrast. Colours that are already light enough are left as chosen.
 const PANEL: Rgb = [23, 21, 27]
 
 export function accentPalette(hue: number, sat = 0.85, startL = 0.6) {
@@ -130,7 +120,6 @@ export function accentPalette(hue: number, sat = 0.85, startL = 0.6) {
   }
 }
 
-// A hue (theme presets / adaptive song colour) or any hex (custom pick).
 export type AccentSource = number | string
 
 export function paletteFor(src: AccentSource) {
@@ -144,8 +133,6 @@ export function applyAccent(src: AccentSource) {
   for (const [k, v] of Object.entries(paletteFor(src))) root.setProperty(k, v)
 }
 
-// 1rem = 10px at 1080p and 100%, so every size in the stylesheet scales together with the
-// player's resolution (4K NUI is otherwise tiny) and their own preference.
 export function applyScale() {
   const auto = Math.min(window.innerHeight / 1080, window.innerWidth / 1600)
   const base = Math.max(0.75, Math.min(2.4, auto))

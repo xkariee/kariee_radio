@@ -22,7 +22,6 @@ const isCurrent = computed(() => !!song.value && store.currentSong.value?.id ===
 
 const items = () => Array.from(menuEl.value?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? [])
 
-// Measure after render so the menu can flip/clamp to stay fully on screen.
 watch(
   () => state.menu,
   async (m, old) => {

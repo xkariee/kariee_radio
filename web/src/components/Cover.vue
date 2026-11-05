@@ -5,7 +5,6 @@ import Icon from './Icon.vue'
 const props = withDefaults(
   defineProps<{
     src?: string | null
-    // Tried first (e.g. a high-res YouTube thumbnail that might not exist), `src` is the fallback.
     hiSrc?: string | null
     hue?: number
     size?: number | 'fill'
@@ -23,7 +22,6 @@ watch(
 
 const shown = computed(() => (props.hiSrc && useHi.value ? props.hiSrc : props.src))
 
-// YouTube serves a 120px grey placeholder (not an error) when maxres doesn't exist.
 function onLoad(e: Event) {
   const img = e.target as HTMLImageElement
   if (shown.value === props.hiSrc && img.naturalWidth <= 120) useHi.value = false
@@ -41,7 +39,6 @@ const style = computed(() => {
     height: props.size === 'fill' ? 'auto' : dim,
     aspectRatio: props.size === 'fill' ? '1' : undefined,
     borderRadius: `${props.radius / 10}rem`,
-    // Generated art for songs/playlists without an image: two-tone gradient + soft light source.
     background: shown.value
       ? '#1d1a21'
       : `radial-gradient(circle at 78% 18%, hsla(${(h + 30) % 360}, 90%, 70%, 0.55), transparent 55%),

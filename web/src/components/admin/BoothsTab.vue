@@ -2,11 +2,10 @@
 import { computed, nextTick, ref } from 'vue'
 import type { AdminStation } from '../../types'
 import { store } from '../../store'
-import { formatDistance, shortDate } from '../../utils/format'
+import { byDistance, formatDistance, matchesQuery, plural, shortDate } from '../../utils/format'
 import Icon from '../Icon.vue'
 import Cover from '../Cover.vue'
 
-// Every DJ booth: where it is, who placed it, what it's playing - plus rename/remove/locate.
 const { state } = store
 const data = computed(() => state.admin.data!)
 
@@ -14,19 +13,21 @@ type Filter = 'all' | 'live' | 'idle'
 const filter = ref<Filter>('all')
 const q = ref('')
 
-const list = computed(() => {
-  const needle = q.value.trim().toLowerCase()
-  return data.value.stations
-    .filter((s) => (filter.value === 'live' ? s.playing : filter.value === 'idle' ? !s.playing : true))
-    .filter(
-      (s) =>
-        !needle ||
-        [s.label, s.ownerName, s.street, s.zone, `#${s.id}`, s.song?.title].filter(Boolean).some((v) => String(v).toLowerCase().includes(needle)),
-    )
-    .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
-})
+const filters: { id: Filter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'live', label: 'Live' },
+  { id: 'idle', label: 'Idle' },
+]
 
-// ─── inline rename ───
+const CONSOLE: Record<string, string> = { prop: 'Prop', entity: 'Object', zone: 'Box' }
+
+const list = computed(() =>
+  data.value.stations
+    .filter((s) => filter.value === 'all' || s.playing === (filter.value === 'live'))
+    .filter((s) => matchesQuery(q.value, [s.label, s.ownerName, s.street, s.zone, `#${s.id}`, s.song?.title]))
+    .sort(byDistance),
+)
+
 const editingId = ref<number | null>(null)
 const draft = ref('')
 const input = ref<HTMLInputElement[] | null>(null)
@@ -51,8 +52,6 @@ function cancel() {
 
 const broadcastFor = (s: AdminStation) => data.value.broadcasts.find((b) => b.id === s.broadcastId)
 
-const CONSOLE: Record<string, string> = { prop: 'Prop', entity: 'Object', zone: 'Box' }
-
 function soundLabel(s: AdminStation) {
   const setup = s.setup
   if (!setup || setup.audio === 'auto') return s.interior ? 'Whole interior' : 'Radius'
@@ -70,9 +69,9 @@ function soundLabel(s: AdminStation) {
         <input v-model="q" type="text" placeholder="Booth, owner or place" aria-label="Search DJ booths" @keydown.esc.stop.prevent="q = ''" />
       </label>
       <div class="admin-chips" role="group" aria-label="Filter booths">
-        <button class="chip" :aria-pressed="filter === 'all'" @click="filter = 'all'">All</button>
-        <button class="chip" :aria-pressed="filter === 'live'" @click="filter = 'live'">Live</button>
-        <button class="chip" :aria-pressed="filter === 'idle'" @click="filter = 'idle'">Idle</button>
+        <button v-for="f in filters" :key="f.id" class="chip" :aria-pressed="filter === f.id" @click="filter = f.id">
+          {{ f.label }}
+        </button>
       </div>
       <span class="spacer" />
       <button class="btn btn-primary sm" @click="store.adminPlaceStation()">
@@ -108,7 +107,7 @@ function soundLabel(s: AdminStation) {
             <span class="admin-pill" title="Who hears it"><Icon name="volume-2" :size="11" /> {{ soundLabel(s) }}</span>
             <span v-if="s.setup?.lights" class="admin-pill accent"><Icon name="sparkles" :size="11" /> {{ s.setup.lights }} lights</span>
             <span v-if="s.setup?.access?.length" class="admin-pill" :title="`Only usable by: ${s.setup.access.join(', ')}`">
-              <Icon name="lock" :size="11" /> {{ s.setup.access.length }} {{ s.setup.access.length === 1 ? 'job' : 'jobs' }}
+              <Icon name="lock" :size="11" /> {{ plural(s.setup.access.length, 'job') }}
             </span>
           </span>
         </div>

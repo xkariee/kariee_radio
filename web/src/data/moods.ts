@@ -1,5 +1,3 @@
-// One-tap searches on Home and the empty Search page. `query` is what actually gets sent to
-// YouTube; `hue` colours the browse tile.
 export const moods = [
   { label: 'Chill', query: 'chill lofi beats mix', hue: 205, icon: 'moon' },
   { label: 'Late-night drive', query: 'night drive synthwave mix', hue: 268, icon: 'car' },

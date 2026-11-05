@@ -32,11 +32,9 @@ const swatch = (id: AccentChoice) => {
   return accentPalette(ACCENT_HUES[id])['--accent']
 }
 
-// What the custom pick actually renders as - a too-dark colour gets lifted for contrast.
 const customShown = computed(() => paletteFor(settings.customAccent)['--accent'])
 const customAdjusted = computed(() => customShown.value.toLowerCase() !== settings.customAccent.toLowerCase())
 
-// Radio-group keyboard behaviour: arrows move the selection, not just focus.
 function onSwatchKey(e: KeyboardEvent, i: number) {
   if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key)) return
   e.preventDefault()
@@ -312,7 +310,6 @@ section > .eyebrow {
     0 0 0 0.5rem var(--text-h);
 }
 
-/* small light badge so the check/droplet reads on any colour, even a near-black custom one */
 .mark {
   display: flex;
   align-items: center;
@@ -325,7 +322,6 @@ section > .eyebrow {
   box-shadow: 0 0.2rem 0.6rem rgba(0, 0, 0, 0.3);
 }
 
-/* the custom swatch gets a dashed ring until chosen, so it reads as "pick your own" */
 .swatch.custom[aria-checked='false'] {
   box-shadow:
     0 0 0 0.25rem var(--panel-raised),

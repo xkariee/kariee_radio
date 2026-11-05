@@ -1,4 +1,3 @@
-/* Registered so the whole UI can glide between song-driven accent colours. */
 @property --accent {
   syntax: '<color>';
   inherits: true;
@@ -30,21 +29,15 @@
   initial-value: rgba(255, 106, 167, 0.38);
 }
 
-/* Width of the Now Playing column - registered so the layout can animate it smoothly. */
 @property --rail-w {
   syntax: '<length>';
   inherits: false;
   initial-value: 0px;
 }
 
-/*
- * Sizing: 1rem = 10px at 1080p / 100% scale. settings.ts rewrites the root font-size for the
- * player's resolution and their interface-size preference, so everything below is in rem.
- */
 :root {
   --on-accent: #120d14;
 
-  /* smoked-glass panels: opaque enough to stay readable over a bright game scene */
   --panel: rgba(22, 20, 26, 0.94);
   --panel-raised: rgba(32, 29, 37, 0.985);
   --panel-solid: #17151b;
@@ -222,8 +215,6 @@ img {
   text-overflow: ellipsis;
 }
 
-/* ─── type ─────────────────────────────────────────────────────────────── */
-
 .eyebrow {
   font-size: 1.1rem;
   font-weight: 700;
@@ -263,8 +254,6 @@ kbd {
   font-weight: 700;
   color: var(--text-dim);
 }
-
-/* ─── buttons ──────────────────────────────────────────────────────────── */
 
 .btn {
   display: inline-flex;
@@ -386,7 +375,6 @@ kbd {
   color: var(--accent);
 }
 
-/* little dot under active toggles, so state isn't conveyed by colour alone */
 .icon-btn[aria-pressed='true']::after {
   content: '';
   position: absolute;
@@ -432,8 +420,6 @@ kbd {
 .play-fab:active:not(:disabled) {
   transform: scale(0.96);
 }
-
-/* ─── chips & inputs ───────────────────────────────────────────────────── */
 
 .chip {
   display: inline-flex;
@@ -496,8 +482,6 @@ kbd {
   background: var(--fill-2);
   box-shadow: 0 0 0 0.3rem var(--accent-soft);
 }
-
-/* ─── range sliders (seek, volume, settings) ───────────────────────────── */
 
 .range {
   --pct: 0%;
@@ -562,8 +546,6 @@ kbd {
 .range:disabled::-webkit-slider-thumb {
   transform: scale(0);
 }
-
-/* ─── equaliser bars (now-playing indicator) ───────────────────────────── */
 
 .eq {
   display: inline-flex;
@@ -637,8 +619,6 @@ kbd {
   animation: shimmer 1.4s linear infinite;
 }
 
-/* ─── empty / notice states ────────────────────────────────────────────── */
-
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -671,8 +651,6 @@ kbd {
   max-width: 38rem;
   font-size: 1.35rem;
 }
-
-/* ─── shared transitions ───────────────────────────────────────────────── */
 
 .fade-enter-active,
 .fade-leave-active {
@@ -715,8 +693,6 @@ kbd {
   opacity: 0;
   transform: translateY(1rem);
 }
-
-/* ─── scrollbars ───────────────────────────────────────────────────────── */
 
 * {
   scrollbar-width: thin;

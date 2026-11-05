@@ -1,8 +1,3 @@
-// Pool of hidden YouTube iframe players, one per active broadcast id (yours + everyone/everything
-// audible around you). Volume for each is driven independently by client/broadcast.lua's
-// distance/interior calculation, pushed in over the NUI bridge - this module only knows how to
-// play/pause/seek/volume a given id, not why.
-
 declare global {
   interface Window {
     YT: any
@@ -20,19 +15,14 @@ interface Entry {
 
 const players = new Map<string, Entry>()
 const endedHandlers = new Map<string, () => void>()
-// Volume updates that arrived before ensurePlayer() finished creating the entry (the very first
-// YouTube iframe API load in particular can take a while) - without this they'd be silently
-// dropped, leaving the player stuck at YouTube's default 100% volume forever.
-const pendingVolumeById = new Map<string, number>()
+const pendingVolumes = new Map<string, number>()
 let apiPromise: Promise<void> | null = null
 
+const hostId = (id: string) => `yt-host-${id}`
+
 function loadIframeApi(): Promise<void> {
-  if (apiPromise) return apiPromise
-  apiPromise = new Promise((resolve) => {
-    if (window.YT?.Player) {
-      resolve()
-      return
-    }
+  apiPromise ??= new Promise((resolve) => {
+    if (window.YT?.Player) return resolve()
     const tag = document.createElement('script')
     tag.src = 'https://www.youtube.com/iframe_api'
     document.head.appendChild(tag)
@@ -46,14 +36,14 @@ function loadIframeApi(): Promise<void> {
 }
 
 function ensureHost(id: string): string {
-  const hostId = `yt-host-${id}`
-  if (!document.getElementById(hostId)) {
+  const elementId = hostId(id)
+  if (!document.getElementById(elementId)) {
     const el = document.createElement('div')
-    el.id = hostId
+    el.id = elementId
     el.style.cssText = 'position:fixed;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;'
     document.body.appendChild(el)
   }
-  return hostId
+  return elementId
 }
 
 async function ensurePlayer(id: string): Promise<Entry> {
@@ -61,13 +51,11 @@ async function ensurePlayer(id: string): Promise<Entry> {
   if (existing) return existing
 
   await loadIframeApi()
-  const hostId = ensureHost(id)
-  // Default to silent rather than trusting YouTube's 100% default - safer to fail quiet than loud.
-  const entry: Entry = { player: null, ready: false, pendingVolume: pendingVolumeById.get(id) ?? 0 }
-  pendingVolumeById.delete(id)
+  const entry: Entry = { player: null, ready: false, pendingVolume: pendingVolumes.get(id) ?? 0 }
+  pendingVolumes.delete(id)
   players.set(id, entry)
 
-  entry.player = new window.YT.Player(hostId, {
+  entry.player = new window.YT.Player(ensureHost(id), {
     height: '0',
     width: '0',
     playerVars: { playsinline: 1, controls: 0, disablekb: 1, modestbranding: 1 },
@@ -92,67 +80,57 @@ async function ensurePlayer(id: string): Promise<Entry> {
   return entry
 }
 
+function readyPlayer(id: string) {
+  const entry = players.get(id)
+  return entry?.ready ? entry.player : null
+}
+
 export async function play(id: string, videoId: string, startSeconds = 0) {
   const entry = await ensurePlayer(id)
-  if (entry.ready) entry.player.loadVideoById({ videoId, startSeconds })
-  else {
+  if (entry.ready) {
+    entry.player.loadVideoById({ videoId, startSeconds })
+  } else {
     entry.pendingVideoId = videoId
     entry.pendingStart = startSeconds
   }
 }
 
 export function pause(id: string) {
-  const entry = players.get(id)
-  if (entry?.ready) entry.player.pauseVideo()
+  readyPlayer(id)?.pauseVideo()
 }
 
 export function resume(id: string) {
-  const entry = players.get(id)
-  if (entry?.ready) entry.player.playVideo()
+  readyPlayer(id)?.playVideo()
 }
 
 export function seek(id: string, seconds: number) {
-  const entry = players.get(id)
-  if (entry?.ready) entry.player.seekTo(seconds, true)
+  readyPlayer(id)?.seekTo(seconds, true)
 }
 
-export function setVolume(id: string, volume0to1: number) {
-  const vol = Math.round(Math.max(0, Math.min(1, volume0to1)) * 100)
+export function setVolume(id: string, volume: number) {
+  const percent = Math.round(Math.max(0, Math.min(1, volume)) * 100)
   const entry = players.get(id)
-  if (!entry) {
-    // No player yet (still being created, or hasn't been told to play anything) - remember it so
-    // ensurePlayer() can apply it as soon as the entry exists, instead of dropping it silently.
-    pendingVolumeById.set(id, vol)
-    return
-  }
-  if (entry.ready) entry.player.setVolume(vol)
-  else entry.pendingVolume = vol
+  if (!entry) pendingVolumes.set(id, percent)
+  else if (entry.ready) entry.player.setVolume(percent)
+  else entry.pendingVolume = percent
 }
 
 export function destroy(id: string) {
-  const entry = players.get(id)
-  if (entry?.player?.destroy) entry.player.destroy()
+  players.get(id)?.player?.destroy?.()
   players.delete(id)
-  pendingVolumeById.delete(id)
+  pendingVolumes.delete(id)
   endedHandlers.delete(id)
-  document.getElementById(`yt-host-${id}`)?.remove()
+  document.getElementById(hostId(id))?.remove()
 }
 
 export function onEnded(id: string, cb: () => void) {
   endedHandlers.set(id, cb)
 }
 
-export function getCurrentTime(id: string): number {
-  const entry = players.get(id)
-  return entry?.ready ? entry.player.getCurrentTime() : 0
-}
-
-// Where the player actually is in the video (what this client hears right now), or null while
-// it's still being created / has nothing loaded.
 export function getPosition(id: string): { time: number; playing: boolean } | null {
   const entry = players.get(id)
   if (!entry?.ready || entry.pendingVideoId || typeof entry.player.getPlayerState !== 'function') return null
-  const s = entry.player.getPlayerState()
-  if (s === window.YT.PlayerState.UNSTARTED) return null
-  return { time: Number(entry.player.getCurrentTime()) || 0, playing: s === window.YT.PlayerState.PLAYING }
+  const playerState = entry.player.getPlayerState()
+  if (playerState === window.YT.PlayerState.UNSTARTED) return null
+  return { time: Number(entry.player.getCurrentTime()) || 0, playing: playerState === window.YT.PlayerState.PLAYING }
 }

@@ -1,29 +1,46 @@
--- DJ booth creator: /createdj (new booth), /editdj or the admin panel (existing booth).
--- Five steps - Console, Sound, Lights, Access, Save - previewed live in the world, with the current
--- step's keys shown in the NUI (web/src/components/CreatorHud.vue). The Access step's job picker
--- is the one part that takes the mouse (web/src/components/AccessPicker.vue).
-
 local STEPS = { 'Console', 'Sound', 'Lights', 'Access', 'Save' }
 
 local CTRL = {
-    enter = 201,   -- Enter
-    back = 73,     -- X
-    cancel = 200,  -- Esc
-    mode = 47,     -- G
-    color = 26,    -- C
-    place = 38,    -- E
-    remove = 194,  -- Backspace
-    model = 244,   -- M
-    up = 172, down = 173, left = 174, right = 175,
-    pgUp = 10, pgDown = 11,
+    enter = 201,
+    back = 73,
+    cancel = 200,
+    mode = 47,
+    color = 26,
+    place = 38,
+    remove = 194,
+    model = 244,
+    up = 172,
+    down = 173,
+    left = 174,
+    right = 175,
+    pgUp = 10,
+    pgDown = 11,
     shift = 21,
 }
-local SCROLL_UP, SCROLL_DOWN = { 15, 241 }, { 14, 242 }
 
--- Everything the creator uses, plus combat/weapon-wheel so nothing fires while placing.
+local SCROLL_UP = { 15, 241 }
+local SCROLL_DOWN = { 14, 242 }
+
 local DISABLED = {
     24, 25, 37, 14, 15, 16, 17, 140, 141, 142, 257, 263, 264, 81, 82, 99, 100,
     38, 44, 47, 26, 73, 244, 200, 194, 201, 191, 10, 11, 172, 173, 174, 175, 241, 242,
+}
+
+local BOX_EDGES = {
+    { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 1 },
+    { 5, 6 }, { 6, 7 }, { 7, 8 }, { 8, 5 },
+    { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 },
+}
+
+local AIM_FLAGS = 1 + 16
+
+local COLORS = {
+    console = { 120, 200, 255 },
+    area = { 120, 255, 170 },
+    muffled = { 255, 190, 80 },
+    radius = { 80, 200, 255 },
+    highlight = { 255, 80, 80 },
+    white = { 255, 255, 255 },
 }
 
 local CONSOLE_LABEL = { keep = 'Keep current', prop = 'New prop', entity = 'Existing object', zone = 'Interaction box' }
@@ -31,111 +48,150 @@ local CONSOLE_KIND = { prop = 'Prop', entity = 'Existing object', zone = 'Intera
 local AUDIO_LABEL = { interior = 'Whole interior', radius = 'Radius', area = 'Custom area' }
 local LIGHT_TYPES = { 'spot', 'laser', 'ball', 'strobe' }
 local LIGHT_LABEL = { spot = 'Moving spotlight', laser = 'Laser fan', ball = 'Mirror ball', strobe = 'Strobe / wash' }
+local AREA_WARNING = 'Add at least 3 corners, or switch to a radius.'
 
 local session = nil
--- True while the job picker has NUI focus (and briefly after), so the key that closed it
--- doesn't also advance or cancel the creator.
 local muted = false
 
--- ─── input / geometry helpers ──────────────────────────────────────────────
+local function pressed(control)
+    return not muted and IsDisabledControlJustPressed(0, control)
+end
 
-local function pressed(c) return not muted and IsDisabledControlJustPressed(0, c) end
-local function held(c) return not muted and IsDisabledControlPressed(0, c) end
-local function fine() return IsControlPressed(0, CTRL.shift) end
+local function held(control)
+    return not muted and IsDisabledControlPressed(0, control)
+end
+
+local function tune(coarse, precise)
+    return IsControlPressed(0, CTRL.shift) and precise or coarse
+end
 
 local function scrolled()
     if muted then return 0 end
-    for _, c in ipairs(SCROLL_UP) do if IsDisabledControlJustPressed(0, c) then return 1 end end
-    for _, c in ipairs(SCROLL_DOWN) do if IsDisabledControlJustPressed(0, c) then return -1 end end
+    for _, control in ipairs(SCROLL_UP) do
+        if IsDisabledControlJustPressed(0, control) then return 1 end
+    end
+    for _, control in ipairs(SCROLL_DOWN) do
+        if IsDisabledControlJustPressed(0, control) then return -1 end
+    end
     return 0
 end
 
--- -1 / 0 / +1 while a left/right (or other) pair is held
-local function axis(neg, pos)
-    if held(pos) then return 1 end
-    if held(neg) then return -1 end
+local function axis(negative, positive)
+    if held(positive) then return 1 end
+    if held(negative) then return -1 end
     return 0
 end
 
-local function clamp(v, min, max) return math.min(max, math.max(min, v)) end
+local function clamp(value, min, max)
+    return math.min(max, math.max(min, value))
+end
+
+local function cycle(list, current)
+    for i, value in ipairs(list) do
+        if value == current then return list[i % #list + 1] end
+    end
+    return list[1]
+end
+
+local function copy(t)
+    local out = {}
+    for key, value in pairs(t) do out[key] = value end
+    return out
+end
+
+local function copyList(list)
+    local out = {}
+    for i, item in ipairs(list or {}) do out[i] = copy(item) end
+    return out
+end
+
+local function flashing(s)
+    return s.flash ~= nil and GetGameTimer() < s.flash
+end
+
+local function addOption(hud, label, active)
+    hud.options[#hud.options + 1] = { label = label, active = active }
+end
+
+local function addInfo(hud, label, value, swatch)
+    hud.info[#hud.info + 1] = { label = label, value = value, swatch = swatch }
+end
+
+local function addKey(hud, label, ...)
+    hud.keys[#hud.keys + 1] = { keys = { ... }, label = label }
+end
 
 local function rotationToDirection(rotation)
-    local rad = math.pi / 180
-    local x, z = rotation.x * rad, rotation.z * rad
-    return vector3(-math.sin(z) * math.abs(math.cos(x)), math.cos(z) * math.abs(math.cos(x)), math.sin(x))
+    local pitch, yaw = math.rad(rotation.x), math.rad(rotation.z)
+    local flat = math.abs(math.cos(pitch))
+    return vector3(-math.sin(yaw) * flat, math.cos(yaw) * flat, math.sin(pitch))
 end
 
----@return boolean hit, vector3 coords, number entity, vector3 dir, vector3 normal
 local function aimRay(distance, flags)
     local cam = GetGameplayCamCoord()
     local dir = rotationToDirection(GetGameplayCamRot(2))
     local dest = cam + dir * distance
-    local handle = StartExpensiveSynchronousShapeTestLosProbe(cam.x, cam.y, cam.z, dest.x, dest.y, dest.z, flags, PlayerPedId(), 7)
+    local handle = StartExpensiveSynchronousShapeTestLosProbe(cam.x, cam.y, cam.z, dest.x, dest.y, dest.z, flags, Utils.ped, 7)
     local _, hit, coords, normal, entity = GetShapeTestResult(handle)
     return hit == 1, hit == 1 and coords or dest, entity, dir, normal
 end
 
-local function line(a, b, r, g, bl, al)
-    DrawLine(a.x, a.y, a.z, b.x, b.y, b.z, r, g, bl, al or 255)
+local function line(a, b, color, alpha)
+    DrawLine(a.x, a.y, a.z, b.x, b.y, b.z, color[1], color[2], color[3], alpha or 255)
 end
 
-local function quad(a, b, c, d, r, g, bl, al)
-    -- both windings so the face shows from either side
-    DrawPoly(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, r, g, bl, al)
-    DrawPoly(c.x, c.y, c.z, b.x, b.y, b.z, a.x, a.y, a.z, r, g, bl, al)
-    DrawPoly(a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z, r, g, bl, al)
-    DrawPoly(d.x, d.y, d.z, c.x, c.y, c.z, a.x, a.y, a.z, r, g, bl, al)
+local function quad(a, b, c, d, color, alpha)
+    local r, g, bl = color[1], color[2], color[3]
+    DrawPoly(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, r, g, bl, alpha)
+    DrawPoly(c.x, c.y, c.z, b.x, b.y, b.z, a.x, a.y, a.z, r, g, bl, alpha)
+    DrawPoly(a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z, r, g, bl, alpha)
+    DrawPoly(d.x, d.y, d.z, c.x, c.y, c.z, a.x, a.y, a.z, r, g, bl, alpha)
 end
 
----Rotated box (heading-only rotation, same convention as ox_target box zones).
-local function drawBox(center, sx, sy, sz, rot, r, g, b)
-    local rad = math.rad(rot)
-    local c, s = math.cos(rad), math.sin(rad)
+local function sphere(p, size, color, alpha)
+    Utils:DrawSphere(p, size, color[1], color[2], color[3], alpha)
+end
+
+local function drawEdges(corners, color)
+    for _, edge in ipairs(BOX_EDGES) do line(corners[edge[1]], corners[edge[2]], color) end
+end
+
+local function drawZone(zone, color)
+    local rad = math.rad(zone.rot)
+    local cos, sin = math.cos(rad), math.sin(rad)
+    local hx, hy, hz = zone.sx / 2, zone.sy / 2, zone.sz / 2
     local function corner(dx, dy, dz)
-        return vector3(center.x + dx * c - dy * s, center.y + dx * s + dy * c, center.z + dz)
+        return vector3(zone.x + dx * cos - dy * sin, zone.y + dx * sin + dy * cos, zone.z + dz)
     end
-    local hx, hy, hz = sx / 2, sy / 2, sz / 2
     local p = {
         corner(-hx, -hy, -hz), corner(hx, -hy, -hz), corner(hx, hy, -hz), corner(-hx, hy, -hz),
         corner(-hx, -hy, hz), corner(hx, -hy, hz), corner(hx, hy, hz), corner(-hx, hy, hz),
     }
-    for _, e in ipairs({ { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 1 }, { 5, 6 }, { 6, 7 }, { 7, 8 }, { 8, 5 }, { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 } }) do
-        line(p[e[1]], p[e[2]], r, g, b, 255)
-    end
-    quad(p[5], p[6], p[7], p[8], r, g, b, 45)
-    quad(p[1], p[2], p[6], p[5], r, g, b, 30)
-    quad(p[3], p[4], p[8], p[7], r, g, b, 30)
+    drawEdges(p, color)
+    quad(p[5], p[6], p[7], p[8], color, 45)
+    quad(p[1], p[2], p[6], p[5], color, 30)
+    quad(p[3], p[4], p[8], p[7], color, 30)
 end
 
----Outline of an existing object using its model's bounds (handles any rotation).
-local function drawEntityBox(entity, minV, maxV, r, g, b)
-    local function corner(x, y, z) return GetOffsetFromEntityInWorldCoords(entity, x, y, z) end
+local function drawEntityBox(entity, minV, maxV, color)
+    local function corner(x, y, z)
+        return GetOffsetFromEntityInWorldCoords(entity, x, y, z)
+    end
     local p = {
         corner(minV.x, minV.y, minV.z), corner(maxV.x, minV.y, minV.z), corner(maxV.x, maxV.y, minV.z), corner(minV.x, maxV.y, minV.z),
         corner(minV.x, minV.y, maxV.z), corner(maxV.x, minV.y, maxV.z), corner(maxV.x, maxV.y, maxV.z), corner(minV.x, maxV.y, maxV.z),
     }
-    for _, e in ipairs({ { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 1 }, { 5, 6 }, { 6, 7 }, { 7, 8 }, { 8, 5 }, { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 } }) do
-        line(p[e[1]], p[e[2]], r, g, b, 255)
-    end
-    quad(p[5], p[6], p[7], p[8], r, g, b, 50)
+    drawEdges(p, color)
+    quad(p[5], p[6], p[7], p[8], color, 50)
 end
 
-local function drawRing(center, radius, r, g, b)
-    DrawMarker(1, center.x, center.y, center.z - 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, radius * 2.0, radius * 2.0, 1.6, r, g, b, 55, false, false, 2, false, nil, nil, false)
-end
-
-local function dot(p, size, r, g, b, a)
-    DrawMarker(28, p.x, p.y, p.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, size, size, size, r, g, b, a or 220, false, false, 2, false, nil, nil, false)
-end
-
-local function streetAt(p)
-    local street = GetStreetNameFromHashKey(GetStreetNameAtCoord(p.x, p.y, p.z))
-    return street ~= '' and street or nil
+local function drawRing(center, radius, color)
+    DrawMarker(1, center.x, center.y, center.z - 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, radius * 2.0, radius * 2.0, 1.6, color[1], color[2], color[3], 55, false, false, 2, false, nil, nil, false)
 end
 
 local function describeSpot(pos)
     local interior = GetInteriorAtCoords(pos.x, pos.y, pos.z)
-    local street = streetAt(pos)
+    local street = Utils:GetStreet(pos)
     local where = interior ~= 0 and ('Indoors · interior #%d'):format(interior) or 'Outdoors'
     return street and ('%s · %s'):format(where, street) or where, interior
 end
@@ -148,74 +204,90 @@ local function interiorTaken(interior, ignoreId)
     return false
 end
 
-local function copyList(list)
-    local out = {}
-    for i, v in ipairs(list or {}) do
-        local item = {}
-        for k, val in pairs(v) do item[k] = val end
-        out[i] = item
-    end
-    return out
+local function deleteGhost(s, slot)
+    local ghost = s.ghosts[slot]
+    if ghost then Utils:DeleteProp(ghost.obj) end
+    s.ghosts[slot] = nil
 end
 
--- ─── console preview (ghost prop) ──────────────────────────────────────────
-
-local function deleteGhost(s)
-    if s.ghost and DoesEntityExist(s.ghost) then DeleteObject(s.ghost) end
-    s.ghost, s.ghostModel = nil, nil
+local function ensureGhost(s, slot, model, coords)
+    local ghost = s.ghosts[slot]
+    if ghost and ghost.model == model and DoesEntityExist(ghost.obj) then return ghost.obj end
+    deleteGhost(s, slot)
+    local obj = Utils:SpawnProp(model, coords, 170)
+    if obj then s.ghosts[slot] = { obj = obj, model = model } end
+    return obj
 end
 
-local function ensureGhost(s, model)
-    if s.ghost and s.ghostModel == model and DoesEntityExist(s.ghost) then return s.ghost end
-    deleteGhost(s)
-    if not LoadModel(model) then return nil end
-    local p = GetEntityCoords(PlayerPedId())
-    s.ghost = CreateObject(model, p.x, p.y, p.z, false, false, false)
-    s.ghostModel = model
-    SetEntityAlpha(s.ghost, 170, false)
-    SetEntityCollision(s.ghost, false, false)
-    FreezeEntityPosition(s.ghost, true)
-    SetModelAsNoLongerNeeded(model)
-    return s.ghost
+local function deletePreviews(s)
+    for _, obj in ipairs(s.previews) do Utils:DeleteProp(obj) end
+    s.previews = {}
+end
+
+local function syncPreviews(s)
+    if s.previewRev == s.lightsRev then return end
+    deletePreviews(s)
+    for _, prop in ipairs(DjFixtureProps(s.lights)) do s.previews[#s.previews + 1] = SpawnDjFixture(prop, true) end
+    s.previewRev = s.lightsRev
+end
+
+local function cleanup(s)
+    deleteGhost(s, 'console')
+    deleteGhost(s, 'light')
+    deletePreviews(s)
+    if s.picking then SetNuiFocus(false, false) end
 end
 
 local function showConsole(s, console)
-    if console.mode == 'prop' then
-        local ghost = ensureGhost(s, console.model)
-        if ghost then
-            SetEntityCoordsNoOffset(ghost, console.pos.x, console.pos.y, console.pos.z, false, false, false)
-            SetEntityHeading(ghost, console.heading)
-        end
-    else
-        deleteGhost(s)
-        local z = console.zone
-        drawBox(vector3(z.x, z.y, z.z), z.sx, z.sy, z.sz, z.rot, 120, 200, 255)
+    if console.mode ~= 'prop' then
+        deleteGhost(s, 'console')
+        return drawZone(console.zone, COLORS.console)
     end
+    local ghost = ensureGhost(s, 'console', console.model, console.pos)
+    if not ghost then return end
+    SetEntityCoordsNoOffset(ghost, console.pos.x, console.pos.y, console.pos.z, false, false, false)
+    SetEntityHeading(ghost, console.heading)
 end
-
--- ─── step 1: console ───────────────────────────────────────────────────────
 
 local function consoleModes(s)
-    local modes = {}
-    if s.console then modes[#modes + 1] = 'keep' end
-    modes[#modes + 1] = 'prop'
-    modes[#modes + 1] = 'entity'
-    modes[#modes + 1] = 'zone'
-    return modes
+    if s.console then return { 'keep', 'prop', 'entity', 'zone' } end
+    return { 'prop', 'entity', 'zone' }
 end
 
-local function cycle(list, current)
-    for i, v in ipairs(list) do
-        if v == current then return list[i % #list + 1] end
-    end
-    return list[1]
+local function aimedObject()
+    local hit, _, entity = aimRay(Config.Placement.maxDistance * 1.5, -1)
+    if not hit or entity == 0 or GetEntityType(entity) ~= 3 then return nil end
+
+    local model = GetEntityModel(entity)
+    local minV, maxV = GetModelDimensions(model)
+    local mid = (minV + maxV) / 2
+    local center = GetOffsetFromEntityInWorldCoords(entity, mid.x, mid.y, mid.z)
+    local size = maxV - minV
+    local heading = GetEntityHeading(entity)
+    local ok, name = pcall(GetEntityArchetypeName, entity)
+    drawEntityBox(entity, minV, maxV, COLORS.console)
+
+    return {
+        mode = 'entity',
+        pos = center,
+        heading = heading,
+        objectName = ok and name ~= '' and name or ('model %d'):format(model),
+        zone = {
+            x = center.x,
+            y = center.y,
+            z = center.z,
+            sx = math.max(0.5, size.x + 0.3),
+            sy = math.max(0.5, size.y + 0.3),
+            sz = math.max(0.8, size.z + 0.3),
+            rot = heading,
+        },
+    }
 end
 
 local function stepConsole(s, hud)
     if pressed(CTRL.mode) then s.mode = cycle(consoleModes(s), s.mode) end
-    local candidate, warning
-    local spin = scrolled()
-    local step = fine() and 2.5 or 15.0
+    local spin = scrolled() * tune(15.0, 2.5)
+    local candidate
 
     if s.mode == 'keep' then
         candidate = s.console
@@ -223,45 +295,21 @@ local function stepConsole(s, hud)
     elseif s.mode == 'prop' then
         if pressed(CTRL.model) then s.modelIndex = s.modelIndex % #s.models + 1 end
         local model = s.models[s.modelIndex]
-        local _, aim = aimRay(Config.Placement.maxDistance, 1 + 16)
-        s.heading = (s.heading + spin * step + axis(CTRL.right, CTRL.left) * Config.Placement.rotateStep) % 360
-        s.lift = clamp(s.lift + axis(CTRL.down, CTRL.up) * Config.Placement.heightStep * (fine() and 0.25 or 1), -2.0, 3.0)
+        local _, aim = aimRay(Config.Placement.maxDistance, AIM_FLAGS)
+        s.heading = (s.heading + spin + axis(CTRL.right, CTRL.left) * Config.Placement.rotateStep) % 360
+        s.lift = clamp(s.lift + axis(CTRL.down, CTRL.up) * Config.Placement.heightStep * tune(1.0, 0.25), -2.0, 3.0)
         candidate = { mode = 'prop', model = model.hash, modelName = model.name, pos = vector3(aim.x, aim.y, aim.z + s.lift), heading = s.heading }
         showConsole(s, candidate)
     elseif s.mode == 'entity' then
-        deleteGhost(s)
-        local hit, _, entity = aimRay(Config.Placement.maxDistance * 1.5, -1)
-        if hit and entity ~= 0 and GetEntityType(entity) == 3 then
-            local model = GetEntityModel(entity)
-            local minV, maxV = GetModelDimensions(model)
-            local mid = (minV + maxV) / 2
-            local center = GetOffsetFromEntityInWorldCoords(entity, mid.x, mid.y, mid.z)
-            local size = maxV - minV
-            local heading = GetEntityHeading(entity)
-            drawEntityBox(entity, minV, maxV, 120, 200, 255)
-            local ok, name = pcall(GetEntityArchetypeName, entity)
-            candidate = {
-                mode = 'entity',
-                pos = center,
-                heading = heading,
-                objectName = ok and name ~= '' and name or ('model %d'):format(model),
-                zone = {
-                    x = center.x, y = center.y, z = center.z,
-                    sx = math.max(0.5, size.x + 0.3), sy = math.max(0.5, size.y + 0.3), sz = math.max(0.8, size.z + 0.3),
-                    rot = heading,
-                },
-            }
-        else
-            warning = 'Aim at an object (a desk, speaker, DJ table…) to use it as the console.'
-        end
-    elseif s.mode == 'zone' then
-        deleteGhost(s)
-        local f = fine() and 0.005 or 0.02
-        s.heading = (s.heading + spin * step) % 360
-        s.box.sx = clamp(s.box.sx + axis(CTRL.left, CTRL.right) * f, 0.3, 12.0)
-        s.box.sy = clamp(s.box.sy + axis(CTRL.down, CTRL.up) * f, 0.3, 12.0)
-        s.box.sz = clamp(s.box.sz + axis(CTRL.pgDown, CTRL.pgUp) * f, 0.3, 8.0)
-        local _, aim = aimRay(Config.Placement.maxDistance, 1 + 16)
+        deleteGhost(s, 'console')
+        candidate = aimedObject()
+    else
+        local step = tune(0.02, 0.005)
+        s.heading = (s.heading + spin) % 360
+        s.box.sx = clamp(s.box.sx + axis(CTRL.left, CTRL.right) * step, 0.3, 12.0)
+        s.box.sy = clamp(s.box.sy + axis(CTRL.down, CTRL.up) * step, 0.3, 12.0)
+        s.box.sz = clamp(s.box.sz + axis(CTRL.pgDown, CTRL.pgUp) * step, 0.3, 8.0)
+        local _, aim = aimRay(Config.Placement.maxDistance, AIM_FLAGS)
         local center = vector3(aim.x, aim.y, aim.z + s.box.sz / 2)
         candidate = {
             mode = 'zone',
@@ -273,60 +321,59 @@ local function stepConsole(s, hud)
     end
 
     local location, interior = 'Aim somewhere', 0
-    if candidate then
-        location, interior = describeSpot(candidate.pos)
-        if interiorTaken(interior, s.station and s.station.id) then
-            warning = Config.Messages.dj_interior_occupied
-            candidate.blocked = true
-        end
-    end
+    if candidate then location, interior = describeSpot(candidate.pos) end
+    local blocked = interiorTaken(interior, s.station and s.station.id)
 
-    -- HUD
     hud.title, hud.subtitle = 'Place the console', 'Where people walk up to start the music.'
-    hud.options = {}
-    for _, m in ipairs(consoleModes(s)) do hud.options[#hud.options + 1] = { label = CONSOLE_LABEL[m], active = m == s.mode } end
-    hud.info = { { label = 'Location', value = location } }
-    hud.keys = { { keys = { 'Enter' }, label = s.mode == 'keep' and 'Keep this console' or 'Confirm console' }, { keys = { 'G' }, label = 'Switch mode' } }
-    if s.mode == 'prop' then
-        table.insert(hud.info, { label = 'Prop', value = ('%s (%d/%d)'):format(s.models[s.modelIndex].name, s.modelIndex, #s.models) })
-        table.insert(hud.info, { label = 'Rotation · height', value = ('%d° · %+.2f m'):format(math.floor(s.heading), s.lift) })
-        table.insert(hud.keys, { keys = { 'M' }, label = 'Change prop' })
-        table.insert(hud.keys, { keys = { 'Scroll' }, label = 'Rotate' })
-        table.insert(hud.keys, { keys = { '↑', '↓' }, label = 'Raise / lower' })
-        table.insert(hud.keys, { keys = { 'Shift' }, label = 'Fine adjust' })
-    elseif s.mode == 'entity' then
-        table.insert(hud.info, { label = 'Object', value = candidate and candidate.objectName or 'none' })
-        table.insert(hud.info, { label = 'Players use', value = 'ox_target on that object' })
-    elseif s.mode == 'zone' then
-        table.insert(hud.info, { label = 'Box size', value = ('%.1f × %.1f × %.1f m'):format(s.box.sx, s.box.sy, s.box.sz) })
-        table.insert(hud.keys, { keys = { 'Scroll' }, label = 'Rotate' })
-        table.insert(hud.keys, { keys = { '←', '→' }, label = 'Width' })
-        table.insert(hud.keys, { keys = { '↑', '↓' }, label = 'Depth' })
-        table.insert(hud.keys, { keys = { 'PgUp', 'PgDn' }, label = 'Height' })
-        table.insert(hud.keys, { keys = { 'Shift' }, label = 'Fine adjust' })
-    elseif s.mode == 'keep' then
-        table.insert(hud.info, { label = 'Console', value = CONSOLE_KIND[s.console.mode] })
-    end
-    hud.warning = warning
+    for _, mode in ipairs(consoleModes(s)) do addOption(hud, CONSOLE_LABEL[mode], mode == s.mode) end
+    addInfo(hud, 'Location', location)
+    addKey(hud, s.mode == 'keep' and 'Keep this console' or 'Confirm console', 'Enter')
+    addKey(hud, 'Switch mode', 'G')
 
-    if pressed(CTRL.enter) and candidate and not candidate.blocked then
+    if s.mode == 'keep' then
+        addInfo(hud, 'Console', CONSOLE_KIND[s.console.mode])
+    elseif s.mode == 'prop' then
+        addInfo(hud, 'Prop', ('%s (%d/%d)'):format(s.models[s.modelIndex].name, s.modelIndex, #s.models))
+        addInfo(hud, 'Rotation · height', ('%d° · %+.2f m'):format(math.floor(s.heading), s.lift))
+        addKey(hud, 'Change prop', 'M')
+        addKey(hud, 'Rotate', 'Scroll')
+        addKey(hud, 'Raise / lower', '↑', '↓')
+        addKey(hud, 'Fine adjust', 'Shift')
+    elseif s.mode == 'entity' then
+        addInfo(hud, 'Object', candidate and candidate.objectName or 'none')
+        addInfo(hud, 'Players use', 'ox_target on that object')
+    else
+        addInfo(hud, 'Box size', ('%.1f × %.1f × %.1f m'):format(s.box.sx, s.box.sy, s.box.sz))
+        addKey(hud, 'Rotate', 'Scroll')
+        addKey(hud, 'Width', '←', '→')
+        addKey(hud, 'Depth', '↑', '↓')
+        addKey(hud, 'Height', 'PgUp', 'PgDn')
+        addKey(hud, 'Fine adjust', 'Shift')
+    end
+
+    if blocked then
+        hud.warning = Config.Messages.dj_interior_occupied
+    elseif s.mode == 'entity' and not candidate then
+        hud.warning = 'Aim at an object (a desk, speaker, DJ table…) to use it as the console.'
+    end
+
+    if candidate and not blocked and pressed(CTRL.enter) then
         local moved = not s.console or #(s.console.pos - candidate.pos) > 0.05
         s.console = candidate
         s.mode = 'keep'
-        if moved and s.audio and s.audio.type == 'interior' then s.audio = nil end -- re-detect the interior
+        if moved and s.audio and s.audio.type == 'interior' then s.audio = nil end
         return 2
     end
 end
 
--- ─── step 2: sound ─────────────────────────────────────────────────────────
-
 local function initAudio(s)
-    local c = s.console.pos
-    s.interiorId = GetInteriorAtCoords(c.x, c.y, c.z)
+    local pos = s.console.pos
+    s.interiorId = GetInteriorAtCoords(pos.x, pos.y, pos.z)
+
     if not s.audio then
         local existing = s.station and s.station.settings and s.station.settings.audio
         if existing then
-            s.audio = copyList({ existing })[1]
+            s.audio = copy(existing)
             s.audio.points = copyList(existing.points)
             if existing.maxZ and existing.minZ then s.areaHeight = existing.maxZ - existing.minZ end
         else
@@ -339,7 +386,7 @@ local function initAudio(s)
             }
         end
     end
-    s.audio.points = s.audio.points or {}
+
     if s.audio.type == 'interior' and s.interiorId == 0 then s.audio.type = 'radius' end
 end
 
@@ -350,136 +397,95 @@ end
 
 local function areaBounds(s)
     local minZ = s.console.pos.z
-    for _, p in ipairs(s.audio.points) do
-        if p.z and p.z < minZ then minZ = p.z end
+    for _, point in ipairs(s.audio.points) do
+        if point.z and point.z < minZ then minZ = point.z end
     end
     minZ = minZ - 1.5
     return minZ, minZ + s.areaHeight
 end
 
 local function drawArea(s, aim)
-    local pts = s.audio.points
+    local points = s.audio.points
+    local count = #points
     local minZ, maxZ = areaBounds(s)
-    local n = #pts
-    for i, p in ipairs(pts) do
-        local a1, a2 = vector3(p.x, p.y, minZ), vector3(p.x, p.y, maxZ)
-        line(a1, a2, 120, 255, 170)
-        dot(vector3(p.x, p.y, (p.z or minZ) + 0.2), 0.25, 120, 255, 170)
-        local q = (i < n) and pts[i + 1] or (n >= 3 and pts[1] or nil)
-        if q then
-            local b1, b2 = vector3(q.x, q.y, minZ), vector3(q.x, q.y, maxZ)
-            line(a1, b1, 120, 255, 170)
-            line(a2, b2, 120, 255, 170)
-            quad(a1, b1, b2, a2, 120, 255, 170, 35)
+
+    for i, point in ipairs(points) do
+        local bottom, top = vector3(point.x, point.y, minZ), vector3(point.x, point.y, maxZ)
+        line(bottom, top, COLORS.area)
+        sphere(vector3(point.x, point.y, (point.z or minZ) + 0.2), 0.25, COLORS.area)
+
+        local nextPoint = i < count and points[i + 1] or (count >= 3 and points[1] or nil)
+        if nextPoint then
+            local nextBottom, nextTop = vector3(nextPoint.x, nextPoint.y, minZ), vector3(nextPoint.x, nextPoint.y, maxZ)
+            line(bottom, nextBottom, COLORS.area)
+            line(top, nextTop, COLORS.area)
+            quad(bottom, nextBottom, nextTop, top, COLORS.area, 35)
         end
     end
+
     if aim then
-        dot(aim, 0.3, 255, 255, 255)
-        if n > 0 then line(vector3(pts[n].x, pts[n].y, aim.z), aim, 255, 255, 255, 160) end
+        sphere(aim, 0.3, COLORS.white)
+        if count > 0 then line(vector3(points[count].x, points[count].y, aim.z), aim, COLORS.white, 160) end
     end
 end
 
 local function stepSound(s, hud)
-    local a = s.audio
-    if pressed(CTRL.mode) then a.type = cycle(audioTypes(s), a.type) end
+    local audio = s.audio
+    if pressed(CTRL.mode) then audio.type = cycle(audioTypes(s), audio.type) end
     local spin = scrolled()
     local console = s.console.pos
     showConsole(s, s.console)
 
-    local location = describeSpot(console)
     hud.title, hud.subtitle = 'Sound area', 'Who hears the music, and how loud.'
-    hud.options = {}
-    for _, t in ipairs(audioTypes(s)) do hud.options[#hud.options + 1] = { label = AUDIO_LABEL[t], active = t == a.type } end
-    hud.info = { { label = 'Console', value = location } }
-    hud.keys = { { keys = { 'Enter' }, label = 'Next: lights' }, { keys = { 'G' }, label = 'Switch sound mode' } }
-
-    if a.type == 'interior' then
-        a.muffled = clamp(a.muffled + axis(CTRL.left, CTRL.right) * (fine() and 0.05 or 0.25) + spin * (fine() and 1 or 5), 0.0, Config.DjSound.maxMuffled)
-        drawRing(console, math.max(0.5, a.muffled), 255, 190, 80)
-        table.insert(hud.info, { label = 'Full volume in', value = ('Whole interior #%d'):format(s.interiorId) })
-        table.insert(hud.info, { label = 'Muffled outside', value = a.muffled < 0.5 and 'Not heard outside' or ('up to %d m'):format(math.floor(a.muffled + 0.5)) })
-        table.insert(hud.keys, { keys = { '←', '→' }, label = 'Muffled range outside' })
-        table.insert(hud.keys, { keys = { 'Scroll' }, label = '±5 m' })
-    elseif a.type == 'radius' then
-        a.range = clamp(a.range + axis(CTRL.left, CTRL.right) * (fine() and 0.1 or 0.5) + spin * (fine() and 1 or 10), Config.DjSound.minRadius, Config.DjSound.maxRadius)
-        drawRing(console, a.range, 80, 200, 255)
-        table.insert(hud.info, { label = 'Heard up to', value = ('%d m, fading with distance'):format(math.floor(a.range + 0.5)) })
-        table.insert(hud.keys, { keys = { '←', '→' }, label = 'Range' })
-        table.insert(hud.keys, { keys = { 'Scroll' }, label = '±10 m' })
-    else
-        local _, aim = aimRay(Config.Placement.farDistance, 1 + 16)
-        if pressed(CTRL.place) and #a.points < Config.DjSound.maxAreaPoints then
-            a.points[#a.points + 1] = { x = aim.x, y = aim.y, z = aim.z }
-        end
-        if pressed(CTRL.remove) and #a.points > 0 then table.remove(a.points) end
-        s.areaHeight = clamp(s.areaHeight + axis(CTRL.pgDown, CTRL.pgUp) * (fine() and 0.02 or 0.1), 2.0, 60.0)
-        a.fade = clamp(a.fade + axis(CTRL.left, CTRL.right) * (fine() and 0.05 or 0.25), 0.0, 100.0)
-        drawArea(s, aim)
-        table.insert(hud.info, { label = 'Corners', value = ('%d / %d%s'):format(#a.points, Config.DjSound.maxAreaPoints, #a.points < 3 and ' · need at least 3' or '') })
-        table.insert(hud.info, { label = 'Area height', value = ('%.1f m'):format(s.areaHeight) })
-        table.insert(hud.info, { label = 'Fades out over', value = ('%d m outside'):format(math.floor(a.fade + 0.5)) })
-        table.insert(hud.keys, 1, { keys = { 'E' }, label = 'Add corner where you aim' })
-        table.insert(hud.keys, 2, { keys = { 'Backspace' }, label = 'Remove last corner' })
-        table.insert(hud.keys, { keys = { 'PgUp', 'PgDn' }, label = 'Area height' })
-        table.insert(hud.keys, { keys = { '←', '→' }, label = 'Fade distance' })
+    for _, kind in ipairs(audioTypes(s)) do addOption(hud, AUDIO_LABEL[kind], kind == audio.type) end
+    addInfo(hud, 'Console', (describeSpot(console)))
+    if audio.type == 'area' then
+        addKey(hud, 'Add corner where you aim', 'E')
+        addKey(hud, 'Remove last corner', 'Backspace')
     end
-    table.insert(hud.keys, { keys = { 'Shift' }, label = 'Fine adjust' })
+    addKey(hud, 'Next: lights', 'Enter')
+    addKey(hud, 'Switch sound mode', 'G')
+
+    if audio.type == 'interior' then
+        audio.muffled = clamp(audio.muffled + axis(CTRL.left, CTRL.right) * tune(0.25, 0.05) + spin * tune(5, 1), 0.0, Config.DjSound.maxMuffled)
+        drawRing(console, math.max(0.5, audio.muffled), COLORS.muffled)
+        addInfo(hud, 'Full volume in', ('Whole interior #%d'):format(s.interiorId))
+        addInfo(hud, 'Muffled outside', audio.muffled < 0.5 and 'Not heard outside' or ('up to %d m'):format(math.floor(audio.muffled + 0.5)))
+        addKey(hud, 'Muffled range outside', '←', '→')
+        addKey(hud, '±5 m', 'Scroll')
+    elseif audio.type == 'radius' then
+        audio.range = clamp(audio.range + axis(CTRL.left, CTRL.right) * tune(0.5, 0.1) + spin * tune(10, 1), Config.DjSound.minRadius, Config.DjSound.maxRadius)
+        drawRing(console, audio.range, COLORS.radius)
+        addInfo(hud, 'Heard up to', ('%d m, fading with distance'):format(math.floor(audio.range + 0.5)))
+        addKey(hud, 'Range', '←', '→')
+        addKey(hud, '±10 m', 'Scroll')
+    else
+        local _, aim = aimRay(Config.Placement.farDistance, AIM_FLAGS)
+        if pressed(CTRL.place) and #audio.points < Config.DjSound.maxAreaPoints then
+            audio.points[#audio.points + 1] = { x = aim.x, y = aim.y, z = aim.z }
+        end
+        if pressed(CTRL.remove) and #audio.points > 0 then table.remove(audio.points) end
+        s.areaHeight = clamp(s.areaHeight + axis(CTRL.pgDown, CTRL.pgUp) * tune(0.1, 0.02), 2.0, 60.0)
+        audio.fade = clamp(audio.fade + axis(CTRL.left, CTRL.right) * tune(0.25, 0.05), 0.0, 100.0)
+        drawArea(s, aim)
+        addInfo(hud, 'Corners', ('%d / %d%s'):format(#audio.points, Config.DjSound.maxAreaPoints, #audio.points < 3 and ' · need at least 3' or ''))
+        addInfo(hud, 'Area height', ('%.1f m'):format(s.areaHeight))
+        addInfo(hud, 'Fades out over', ('%d m outside'):format(math.floor(audio.fade + 0.5)))
+        addKey(hud, 'Area height', 'PgUp', 'PgDn')
+        addKey(hud, 'Fade distance', '←', '→')
+    end
+    addKey(hud, 'Fine adjust', 'Shift')
 
     if pressed(CTRL.enter) then
-        if a.type == 'area' and #a.points < 3 then
-            hud.warning = 'Add at least 3 corners, or switch to a radius.'
-            s.flash = GetGameTimer() + 2500
-            return
-        end
-        return 3
+        if audio.type ~= 'area' or #audio.points >= 3 then return 3 end
+        s.flash = GetGameTimer() + 2500
     end
-    if s.flash and GetGameTimer() < s.flash then hud.warning = 'Add at least 3 corners, or switch to a radius.' end
+    if flashing(s) then hud.warning = AREA_WARNING end
 end
 
--- ─── step 3: lights ────────────────────────────────────────────────────────
-
--- Fixture props: a ghost for the light you're aiming, and a copy of every placed light's prop
--- (respawned when the list changes - s.lightsRev - and shown in every step).
-
-local function deleteLightGhost(s)
-    if s.lightGhost and DoesEntityExist(s.lightGhost) then DeleteObject(s.lightGhost) end
-    s.lightGhost, s.lightGhostModel = nil, nil
-end
-
-local function deletePreviews(s)
-    for _, obj in ipairs(s.previews) do
-        if DoesEntityExist(obj) then DeleteObject(obj) end
-    end
-    s.previews = {}
-end
-
-local function syncPreviews(s)
-    if s.previewRev == s.lightsRev then return end
-    deletePreviews(s)
-    for _, l in ipairs(s.lights) do
-        if l.fixture == 'prop' and l.prop then s.previews[#s.previews + 1] = SpawnDjFixture(l.prop, true) end
-    end
-    s.previewRev = s.lightsRev
-end
-
-local function yawTowards(from, to)
-    return math.deg(math.atan(-(to.x - from.x), to.y - from.y))
-end
-
----Moves the fixture ghost to where you aim: standing on a floor / truss, hanging from a ceiling,
----or stood out from a wall. Faces the console, plus your scroll rotation.
----@return table|nil { lamp = where the light comes out, prop = the light's `prop` }
 local function aimFixture(s, fixture, hit, aim, normal, console)
-    if not (s.lightGhost and s.lightGhostModel == fixture.hash and DoesEntityExist(s.lightGhost)) then
-        deleteLightGhost(s)
-        if not LoadModel(fixture.hash) then return nil end
-        s.lightGhost = CreateObject(fixture.hash, aim.x, aim.y, aim.z, false, false, false)
-        s.lightGhostModel = fixture.hash
-        SetEntityAlpha(s.lightGhost, 170, false)
-        SetEntityCollision(s.lightGhost, false, false)
-        FreezeEntityPosition(s.lightGhost, true)
-        SetModelAsNoLongerNeeded(fixture.hash)
-    end
+    local ghost = ensureGhost(s, 'light', fixture.hash, aim)
+    if not ghost then return nil end
 
     local flip = hit and normal.z < -0.5
     local base = aim
@@ -487,41 +493,42 @@ local function aimFixture(s, fixture, hit, aim, normal, console)
         local minV, maxV = GetModelDimensions(fixture.hash)
         base = aim + normal * ((maxV.y - minV.y) / 2 + 0.05)
     end
-    local heading = (yawTowards(base, console) + s.fixtureSpin) % 360
-    local lamp = PlaceDjFixture(s.lightGhost, base, heading, flip)
-    return { lamp = lamp, prop = { model = fixture.name, x = base.x, y = base.y, z = base.z, h = heading, flip = flip } }
+    local heading = (Utils:HeadingTo(base, console) + s.fixtureSpin) % 360
+
+    return {
+        lamp = PlaceDjFixture(ghost, base, heading, flip),
+        prop = { model = fixture.name, x = base.x, y = base.y, z = base.z, h = heading, flip = flip },
+    }
 end
 
 local function stepLights(s, hud)
     local console = s.console.pos
     showConsole(s, s.console)
     hud.title, hud.subtitle = 'Disco lights', 'Optional. They come on whenever the booth is playing.'
-    hud.keys = { { keys = { 'Enter' }, label = 'Next: access' } }
 
     if not Config.DiscoLights.enabled then
-        hud.options = {}
-        hud.info = { { label = 'Disco lights', value = 'Turned off on this server' } }
+        addInfo(hud, 'Disco lights', 'Turned off on this server')
+        addKey(hud, 'Next: access', 'Enter')
         if pressed(CTRL.enter) then return 4 end
         return
     end
 
     local colors = Config.DiscoLights.colors
+    local maxLights = Config.DiscoLights.maxPerBooth
     if pressed(CTRL.mode) then s.lightType = s.lightType % #LIGHT_TYPES + 1 end
     if pressed(CTRL.color) then s.colorIndex = s.colorIndex % #colors + 1 end
     if pressed(CTRL.model) then s.fixtureIndex = s.fixtureIndex % #s.fixtures + 1 end
     if pressed(CTRL.right) then s.speed = clamp(s.speed + 0.25, 0.25, 3.0) end
     if pressed(CTRL.left) then s.speed = clamp(s.speed - 0.25, 0.25, 3.0) end
+
     local fixture = s.fixtures[s.fixtureIndex]
-
-    local hit, aim, _, dir, normal = aimRay(Config.Placement.farDistance, 1 + 16)
-    -- Pull the light slightly off the surface you aimed at (ceilings, walls, trusses).
+    local color = colors[s.colorIndex]
+    local hit, aim, _, dir, normal = aimRay(Config.Placement.farDistance, AIM_FLAGS)
     local spot = hit and (aim - dir * 0.3) or aim
-    local beats = DjPreviewBeats(GetGameTimer())
+    local pending = { type = LIGHT_TYPES[s.lightType], x = spot.x, y = spot.y, z = spot.z, color = color.name, speed = s.speed, fixture = fixture.kind }
 
-    -- The light you're about to place, previewed where you aim.
-    local pending = { type = LIGHT_TYPES[s.lightType], x = spot.x, y = spot.y, z = spot.z, color = colors[s.colorIndex].name, speed = s.speed, fixture = fixture.kind }
     if fixture.kind == 'prop' then
-        s.fixtureSpin = (s.fixtureSpin + scrolled() * (fine() and 2.5 or 15.0)) % 360
+        s.fixtureSpin = (s.fixtureSpin + scrolled() * tune(15.0, 2.5)) % 360
         local placed = aimFixture(s, fixture, hit, aim, normal, console)
         if placed then
             spot = placed.lamp
@@ -530,27 +537,27 @@ local function stepLights(s, hud)
             pending.fixture = 'glow'
         end
     else
-        deleteLightGhost(s)
+        deleteGhost(s, 'light')
     end
 
-    -- Nearest placed light to the aim point (what Backspace removes).
-    local nearest, nearestDist
-    for i, l in ipairs(s.lights) do
-        local d = #(vector3(l.x, l.y, l.z) - spot)
-        if d < 3.0 and (not nearestDist or d < nearestDist) then nearest, nearestDist = i, d end
+    local nearest, nearestDist = nil, 3.0
+    for i, light in ipairs(s.lights) do
+        local dist = #(vector3(light.x, light.y, light.z) - spot)
+        if dist < nearestDist then nearest, nearestDist = i, dist end
     end
 
+    local beats = DjPreviewBeats(GetGameTimer())
     DrawDjLights(s.lights, console, beats)
-    if #s.lights < Config.DiscoLights.maxPerBooth then DrawDjLights({ pending }, console, beats) end
-    for i, l in ipairs(s.lights) do
-        local p = vector3(l.x, l.y, l.z)
-        if i == nearest then dot(p, 0.45, 255, 80, 80, 160) end
-        line(p, console, 255, 255, 255, 40)
+    if #s.lights < maxLights then DrawDjLights({ pending }, console, beats) end
+    for i, light in ipairs(s.lights) do
+        local p = vector3(light.x, light.y, light.z)
+        if i == nearest then sphere(p, 0.45, COLORS.highlight, 160) end
+        line(p, console, COLORS.white, 40)
     end
-    if fixture.kind ~= 'prop' then dot(spot, 0.18, 255, 255, 255) end
+    if fixture.kind ~= 'prop' then sphere(spot, 0.18, COLORS.white) end
 
     if pressed(CTRL.place) then
-        if #s.lights < Config.DiscoLights.maxPerBooth then
+        if #s.lights < maxLights then
             s.lights[#s.lights + 1] = pending
             s.lightsRev = s.lightsRev + 1
         else
@@ -562,43 +569,39 @@ local function stepLights(s, hud)
         s.lightsRev = s.lightsRev + 1
     end
 
-    hud.options = {}
-    for i, lt in ipairs(LIGHT_TYPES) do hud.options[#hud.options + 1] = { label = LIGHT_LABEL[lt], active = i == s.lightType } end
-    hud.info = {
-        { label = 'Colour', value = colors[s.colorIndex].name, swatch = colors[s.colorIndex].rgb or 'rainbow' },
-        { label = 'Speed', value = ('%.2f×'):format(s.speed) },
-        { label = 'Fixture', value = ('%s (%d/%d)'):format(fixture.label, s.fixtureIndex, #s.fixtures) },
-        { label = 'Lights placed', value = ('%d / %d'):format(#s.lights, Config.DiscoLights.maxPerBooth) },
-    }
+    for i, kind in ipairs(LIGHT_TYPES) do addOption(hud, LIGHT_LABEL[kind], i == s.lightType) end
+    addInfo(hud, 'Colour', color.name, color.rgb or 'rainbow')
+    addInfo(hud, 'Speed', ('%.2f×'):format(s.speed))
+    addInfo(hud, 'Fixture', ('%s (%d/%d)'):format(fixture.label, s.fixtureIndex, #s.fixtures))
     if fixture.kind == 'prop' then
-        table.insert(hud.info, 4, { label = 'Mounted', value = pending.prop and pending.prop.flip and 'Hanging from the ceiling' or 'Standing' })
+        addInfo(hud, 'Mounted', pending.prop and pending.prop.flip and 'Hanging from the ceiling' or 'Standing')
     end
-    table.insert(hud.keys, 1, { keys = { 'E' }, label = 'Place light where you aim' })
-    table.insert(hud.keys, 2, { keys = { 'Backspace' }, label = nearest and 'Remove highlighted light' or 'Remove last light' })
-    table.insert(hud.keys, { keys = { 'G' }, label = 'Light type' })
-    table.insert(hud.keys, { keys = { 'C' }, label = 'Colour' })
-    table.insert(hud.keys, { keys = { 'M' }, label = 'Fixture: dot, nothing or a prop' })
-    if fixture.kind == 'prop' then table.insert(hud.keys, { keys = { 'Scroll' }, label = 'Rotate fixture' }) end
-    table.insert(hud.keys, { keys = { '←', '→' }, label = 'Speed' })
-    if s.flash and GetGameTimer() < s.flash then hud.warning = ('That’s the maximum of %d lights.'):format(Config.DiscoLights.maxPerBooth) end
+    addInfo(hud, 'Lights placed', ('%d / %d'):format(#s.lights, maxLights))
+
+    addKey(hud, 'Place light where you aim', 'E')
+    addKey(hud, nearest and 'Remove highlighted light' or 'Remove last light', 'Backspace')
+    addKey(hud, 'Next: access', 'Enter')
+    addKey(hud, 'Light type', 'G')
+    addKey(hud, 'Colour', 'C')
+    addKey(hud, 'Fixture: dot, nothing or a prop', 'M')
+    if fixture.kind == 'prop' then addKey(hud, 'Rotate fixture', 'Scroll') end
+    addKey(hud, 'Speed', '←', '→')
+    if flashing(s) then hud.warning = ('That’s the maximum of %d lights.'):format(maxLights) end
 
     if pressed(CTRL.enter) then return 4 end
 end
-
--- ─── step 4: access ────────────────────────────────────────────────────────
 
 local function jobLabel(s, name)
     local job = s.jobs and s.jobs.byName[name]
     return job and job.label or name
 end
 
----"Any grade", "Sergeant and up"... for a rule's minimum grade.
 local function gradeLabel(s, rule)
     local job = s.jobs and s.jobs.byName[rule.job]
     local grades = job and job.grades or {}
     if rule.grade <= (grades[1] and grades[1].grade or 0) then return 'Any grade' end
-    for _, g in ipairs(grades) do
-        if g.grade == rule.grade then return ('%s and up'):format(g.label) end
+    for _, grade in ipairs(grades) do
+        if grade.grade == rule.grade then return ('%s and up'):format(grade.label) end
     end
     return ('Grade %d and up'):format(rule.grade)
 end
@@ -627,24 +630,21 @@ local function stepAccess(s, hud)
     DrawDjLights(s.lights, s.console.pos, DjPreviewBeats(GetGameTimer()))
 
     hud.title, hud.subtitle = 'Who can use it', 'Only the jobs you pick can play music here. Pick none and everyone can.'
-    hud.options = { { label = 'Everyone', active = #s.access == 0 }, { label = 'Selected jobs', active = #s.access > 0 } }
-    hud.info = {}
-    if #s.access == 0 then
-        hud.info[1] = { label = 'Console', value = 'Open to every player' }
-    else
-        for i, rule in ipairs(s.access) do
-            if i > 6 then
-                hud.info[#hud.info + 1] = { label = 'And', value = ('%d more job%s'):format(#s.access - 6, #s.access - 6 == 1 and '' or 's') }
-                break
-            end
-            hud.info[#hud.info + 1] = { label = jobLabel(s, rule.job), value = gradeLabel(s, rule) }
+    addOption(hud, 'Everyone', #s.access == 0)
+    addOption(hud, 'Selected jobs', #s.access > 0)
+    if #s.access == 0 then addInfo(hud, 'Console', 'Open to every player') end
+    for i, rule in ipairs(s.access) do
+        if i > 6 then
+            local more = #s.access - 6
+            addInfo(hud, 'And', ('%d more job%s'):format(more, more == 1 and '' or 's'))
+            break
         end
+        addInfo(hud, jobLabel(s, rule.job), gradeLabel(s, rule))
     end
-    hud.keys = {
-        { keys = { 'Enter' }, label = 'Next: review' },
-        { keys = { 'E' }, label = s.picking and 'Picking jobs…' or 'Choose jobs & grades' },
-    }
-    if #s.access > 0 then hud.keys[#hud.keys + 1] = { keys = { 'Backspace' }, label = 'Allow everyone' } end
+
+    addKey(hud, 'Next: review', 'Enter')
+    addKey(hud, s.picking and 'Picking jobs…' or 'Choose jobs & grades', 'E')
+    if #s.access > 0 then addKey(hud, 'Allow everyone', 'Backspace') end
     if not s.jobs then hud.warning = 'Loading jobs…' end
 
     if pressed(CTRL.place) and s.jobs then openAccessPicker(s) end
@@ -652,7 +652,176 @@ local function stepAccess(s, hud)
     if pressed(CTRL.enter) then return 5 end
 end
 
----The picker's Save / Cancel. Only jobs the server listed are kept (it validates again on save).
+local function soundSummary(s)
+    local audio = s.audio
+    if audio.type == 'interior' then
+        if audio.muffled < 0.5 then return ('Interior #%d only'):format(s.interiorId) end
+        return ('Interior #%d · muffled up to %d m outside'):format(s.interiorId, math.floor(audio.muffled + 0.5))
+    end
+    if audio.type == 'area' then
+        return ('Custom area · %d corners · fades over %d m'):format(#audio.points, math.floor(audio.fade + 0.5))
+    end
+    return ('Radius %d m'):format(math.floor(audio.range + 0.5))
+end
+
+local function consoleSummary(console)
+    local kind = CONSOLE_KIND[console.mode]
+    local name = console.mode == 'prop' and console.modelName or console.mode == 'entity' and console.objectName
+    return name and ('%s · %s'):format(kind, name) or kind
+end
+
+local function stepSave(s, hud)
+    local console = s.console.pos
+    local audio = s.audio
+    showConsole(s, s.console)
+    DrawDjLights(s.lights, console, DjPreviewBeats(GetGameTimer()))
+    if audio.type == 'radius' then
+        drawRing(console, audio.range, COLORS.radius)
+    elseif audio.type == 'interior' and audio.muffled > 0.5 then
+        drawRing(console, audio.muffled, COLORS.muffled)
+    elseif audio.type == 'area' then
+        drawArea(s)
+    end
+
+    hud.title = s.station and 'Save changes' or 'Review & save'
+    hud.subtitle = s.station and ('Updating “%s” for everyone.'):format(s.station.label or 'DJ booth') or 'Everyone will see the booth as soon as you save.'
+    addInfo(hud, 'Console', consoleSummary(s.console))
+    addInfo(hud, 'Location', (describeSpot(console)))
+    addInfo(hud, 'Sound', soundSummary(s))
+    addInfo(hud, 'Disco lights', #s.lights == 0 and 'None' or ('%d light%s'):format(#s.lights, #s.lights == 1 and '' or 's'))
+    addInfo(hud, 'Who can use it', accessSummary(s))
+    addKey(hud, s.station and 'Save changes' or 'Create booth', 'Enter')
+
+    if pressed(CTRL.enter) then return 'save' end
+end
+
+local STEP_HANDLERS = { stepConsole, stepSound, stepLights, stepAccess, stepSave }
+
+local function buildSettings(s)
+    local console, current = s.console, s.audio
+    local audio = { type = current.type, range = current.range, muffled = current.muffled, fade = current.fade }
+    if current.type == 'area' then
+        audio.points = {}
+        for i, point in ipairs(current.points) do audio.points[i] = { x = point.x, y = point.y } end
+        audio.minZ, audio.maxZ = areaBounds(s)
+    end
+    return {
+        mode = console.mode,
+        model = console.mode == 'prop' and console.model or nil,
+        zone = console.mode ~= 'prop' and console.zone or nil,
+        audio = audio,
+        lights = s.lights,
+        access = s.access,
+    }
+end
+
+local function save(s)
+    local console = s.console
+    local pos = { x = console.pos.x, y = console.pos.y, z = console.pos.z }
+    local settings = buildSettings(s)
+
+    if s.station then
+        local ok, err = Utils:Callback('dj:update', s.station.id, pos, console.heading, settings)
+        if ok then return Utils:Notify('creator_updated') end
+        return Utils:Notify(err == 'no_permission' and 'no_permission' or 'creator_update_failed')
+    end
+
+    local street = Utils:GetStreet(console.pos)
+    local label = street and ('DJ booth · %s'):format(street) or 'DJ booth'
+    local station, err = Utils:Callback('dj:create', pos, console.heading, label, settings)
+    if station then
+        Utils:Notify('creator_saved')
+        return OpenDjStation(station.id)
+    end
+    if err ~= 'banned' then Utils:Notify(err == 'no_permission' and 'no_permission' or 'creator_create_failed') end
+end
+
+local function sendHud(s, hud, force)
+    local encoded = json.encode(hud)
+    local now = GetGameTimer()
+    if not force and (encoded == s.hudSent or now - s.hudAt < 80) then return end
+    s.hudSent, s.hudAt = encoded, now
+    SendNUIMessage({ action = 'creator', data = hud })
+end
+
+local function run(s)
+    local result
+    while not result do
+        Wait(0)
+        for _, control in ipairs(DISABLED) do DisableControlAction(0, control, true) end
+        muted = s.picking or GetGameTimer() < (s.unmuteAt or 0)
+
+        local hud = {
+            editing = s.station ~= nil,
+            label = s.station and s.station.label or nil,
+            step = s.step,
+            steps = STEPS,
+            options = {},
+            info = {},
+            keys = {},
+        }
+
+        syncPreviews(s)
+        if s.step ~= 3 then deleteGhost(s, 'light') end
+        local nextStep = STEP_HANDLERS[s.step](s, hud)
+
+        if s.step > 1 then addKey(hud, 'Back', 'X') end
+        addKey(hud, 'Cancel', 'Esc')
+        sendHud(s, hud, nextStep ~= nil)
+
+        if nextStep == 'save' then
+            result = 'save'
+        elseif nextStep then
+            s.step, s.flash = nextStep, nil
+            if s.step == 2 then initAudio(s) end
+        elseif pressed(CTRL.back) and s.step > 1 then
+            s.step, s.flash = s.step - 1, nil
+        elseif pressed(CTRL.cancel) then
+            result = 'cancel'
+        end
+    end
+
+    cleanup(s)
+    DjEditingStationId = nil
+    SendNUIMessage({ action = 'creatorAccess', data = false })
+    SendNUIMessage({ action = 'creator', data = false })
+    session = nil
+    muted = false
+
+    if result == 'save' then
+        save(s)
+    else
+        Utils:Notify('placement_cancelled')
+    end
+end
+
+local function streamable(names)
+    local models = {}
+    for _, name in ipairs(names or {}) do
+        local hash = GetHashKey(name)
+        if IsModelInCdimage(hash) then models[#models + 1] = { name = name, hash = hash } end
+    end
+    return models
+end
+
+local function consoleFromStation(station)
+    local settings = station.settings or {}
+    return {
+        mode = settings.mode or 'prop',
+        model = settings.model or Config.DjMixerModel,
+        zone = settings.zone,
+        pos = station.coords,
+        heading = station.heading or 0.0,
+    }
+end
+
+local function fetchJobs(s)
+    local list = Utils:Callback('dj:getJobs') or {}
+    local byName = {}
+    for _, job in ipairs(list) do byName[job.name] = job end
+    s.jobs = { list = list, byName = byName }
+end
+
 RegisterNUICallback('creatorAccess', function(data, cb)
     cb({})
     local s = session
@@ -673,204 +842,33 @@ RegisterNUICallback('creatorAccess', function(data, cb)
     s.access = access
 end)
 
--- ─── step 5: review & save ─────────────────────────────────────────────────
-
-local function soundSummary(s)
-    local a = s.audio
-    if a.type == 'interior' then
-        return a.muffled < 0.5 and ('Interior #%d only'):format(s.interiorId)
-            or ('Interior #%d · muffled up to %d m outside'):format(s.interiorId, math.floor(a.muffled + 0.5))
-    elseif a.type == 'area' then
-        return ('Custom area · %d corners · fades over %d m'):format(#a.points, math.floor(a.fade + 0.5))
-    end
-    return ('Radius %d m'):format(math.floor(a.range + 0.5))
-end
-
-local function stepSave(s, hud)
-    local console = s.console.pos
-    showConsole(s, s.console)
-    DrawDjLights(s.lights, console, DjPreviewBeats(GetGameTimer()))
-    if s.audio.type == 'radius' then drawRing(console, s.audio.range, 80, 200, 255) end
-    if s.audio.type == 'interior' and s.audio.muffled > 0.5 then drawRing(console, s.audio.muffled, 255, 190, 80) end
-    if s.audio.type == 'area' then drawArea(s, nil) end
-
-    local consoleText = CONSOLE_KIND[s.console.mode]
-    if s.console.mode == 'prop' and s.console.modelName then consoleText = ('%s · %s'):format(consoleText, s.console.modelName) end
-    if s.console.mode == 'entity' and s.console.objectName then consoleText = ('%s · %s'):format(consoleText, s.console.objectName) end
-
-    hud.title = s.station and 'Save changes' or 'Review & save'
-    hud.subtitle = s.station and ('Updating “%s” for everyone.'):format(s.station.label or 'DJ booth') or 'Everyone will see the booth as soon as you save.'
-    hud.options = {}
-    hud.info = {
-        { label = 'Console', value = consoleText },
-        { label = 'Location', value = (describeSpot(console)) },
-        { label = 'Sound', value = soundSummary(s) },
-        { label = 'Disco lights', value = #s.lights == 0 and 'None' or ('%d light%s'):format(#s.lights, #s.lights == 1 and '' or 's') },
-        { label = 'Who can use it', value = accessSummary(s) },
-    }
-    hud.keys = { { keys = { 'Enter' }, label = s.station and 'Save changes' or 'Create booth' } }
-    if pressed(CTRL.enter) then return 'save' end
-end
-
--- ─── save / session ────────────────────────────────────────────────────────
-
-local function buildSettings(s)
-    local c, a = s.console, s.audio
-    local audio = { type = a.type, range = a.range, muffled = a.muffled, fade = a.fade }
-    if a.type == 'area' then
-        audio.points = {}
-        for i, p in ipairs(a.points) do audio.points[i] = { x = p.x, y = p.y } end
-        audio.minZ, audio.maxZ = areaBounds(s)
-    end
-    return {
-        mode = c.mode,
-        model = c.mode == 'prop' and c.model or nil,
-        zone = c.mode ~= 'prop' and c.zone or nil,
-        audio = audio,
-        lights = s.lights,
-        access = s.access,
-    }
-end
-
-local function save(s)
-    local c = s.console
-    local pos = { x = c.pos.x, y = c.pos.y, z = c.pos.z }
-    local settings = buildSettings(s)
-
-    if s.station then
-        local ok, err = lib.callback.await('kariee_radio:dj:update', false, s.station.id, pos, c.heading, settings)
-        ESX.ShowNotification(ok and Config.Messages.creator_updated or (err == 'no_permission' and Config.Messages.no_permission or 'Failed to update the DJ booth.'))
-        return
-    end
-
-    local street = streetAt(c.pos)
-    local label = street and ('DJ booth · %s'):format(street) or 'DJ booth'
-    local station, err = lib.callback.await('kariee_radio:dj:create', false, pos, c.heading, label, settings)
-    if not station then
-        if err == 'banned' then return end -- the server already told them why
-        ESX.ShowNotification(err == 'no_permission' and Config.Messages.no_permission or 'Failed to create DJ station.')
-        return
-    end
-    ESX.ShowNotification(Config.Messages.creator_saved)
-    OpenRadio({ kind = 'dj', id = ('dj:%s'):format(station.id), stationId = station.id })
-end
-
-local function consoleFromStation(station)
-    local settings = station.settings or {}
-    local model = settings.model or Config.DjMixerModel
-    return {
-        mode = settings.mode or 'prop',
-        model = model,
-        zone = settings.zone,
-        pos = vector3(station.pos_x, station.pos_y, station.pos_z),
-        heading = station.heading or 0.0,
-    }
-end
-
-local function sendHud(s, hud, force)
-    local encoded = json.encode(hud)
-    local now = GetGameTimer()
-    if not force and (encoded == s.hudSent or now - s.hudAt < 80) then return end
-    s.hudSent, s.hudAt = encoded, now
-    SendNUIMessage({ action = 'creator', data = hud })
-end
-
-local function run(s)
-    local result
-    while true do
-        Wait(0)
-        for _, c in ipairs(DISABLED) do DisableControlAction(0, c, true) end
-        muted = s.picking or GetGameTimer() < (s.unmuteAt or 0)
-
-        local hud = {
-            editing = s.station ~= nil,
-            label = s.station and s.station.label or nil,
-            step = s.step,
-            steps = STEPS,
-            options = {},
-            info = {},
-            keys = {},
-        }
-
-        local nextStep
-        syncPreviews(s)
-        if s.step ~= 3 then deleteLightGhost(s) end
-
-        if s.step == 1 then nextStep = stepConsole(s, hud)
-        elseif s.step == 2 then nextStep = stepSound(s, hud)
-        elseif s.step == 3 then nextStep = stepLights(s, hud)
-        elseif s.step == 4 then nextStep = stepAccess(s, hud)
-        else nextStep = stepSave(s, hud) end
-
-        if s.step > 1 then table.insert(hud.keys, { keys = { 'X' }, label = 'Back' }) end
-        table.insert(hud.keys, { keys = { 'Esc' }, label = 'Cancel' })
-        sendHud(s, hud, nextStep ~= nil)
-
-        if nextStep == 'save' then
-            result = 'save'
-            break
-        elseif nextStep then
-            s.step = nextStep
-            s.flash = nil
-            if s.step == 2 then initAudio(s) end
-        elseif pressed(CTRL.back) and s.step > 1 then
-            s.step = s.step - 1
-            s.flash = nil
-        elseif pressed(CTRL.cancel) then
-            result = 'cancel'
-            break
-        end
-    end
-
-    deleteGhost(s)
-    deleteLightGhost(s)
-    deletePreviews(s)
-    DjEditingStationId = nil
-    if s.picking then SetNuiFocus(false, false) end
-    SendNUIMessage({ action = 'creatorAccess', data = false })
-    SendNUIMessage({ action = 'creator', data = false })
-    session = nil
-    muted = false
-
-    if result == 'save' then save(s) else ESX.ShowNotification(Config.Messages.placement_cancelled) end
-end
-
----Opens the creator. `station` = edit that booth, nil = create a new one.
 function StartDjCreator(station)
     if session then return end
-    if not NetworkIsPlayerActive(PlayerId()) or not PlayerLoaded then
-        ESX.ShowNotification(Config.Messages.not_ready)
-        return
-    end
-    if IsRadioOpen and IsRadioOpen() then CloseRadio() end
+    if not Utils:IsReady() then return Utils:Notify('not_ready') end
+    if IsRadioOpen() then CloseRadio() end
 
-    local models = {}
-    for _, name in ipairs(Config.DjModels) do
-        local hash = GetHashKey(name)
-        if IsModelInCdimage(hash) then models[#models + 1] = { name = name, hash = hash } end
-    end
+    local models = streamable(Config.DjModels)
     if #models == 0 then models[1] = { name = 'default', hash = Config.DjMixerModel } end
 
     local fixtures = { { kind = 'glow', label = 'Glowing dot' }, { kind = 'none', label = 'Nothing, beam only' } }
-    for _, name in ipairs(Config.DiscoLights.fixtures or {}) do
-        local hash = GetHashKey(name)
-        if IsModelInCdimage(hash) then fixtures[#fixtures + 1] = { kind = 'prop', name = name, hash = hash, label = name } end
+    for _, model in ipairs(streamable(Config.DiscoLights.fixtures)) do
+        fixtures[#fixtures + 1] = { kind = 'prop', name = model.name, hash = model.hash, label = model.name }
     end
 
-    local ped = PlayerPedId()
-    session = {
+    local settings = station and station.settings or {}
+    local s = {
         station = station,
         step = 1,
         mode = station and 'keep' or 'prop',
         console = station and consoleFromStation(station) or nil,
         models = models,
         modelIndex = 1,
-        heading = GetEntityHeading(ped),
+        heading = GetEntityHeading(Utils.ped),
         lift = 0.0,
         box = { sx = 1.6, sy = 1.0, sz = 1.3 },
         areaHeight = Config.DjSound.defaultAreaHeight,
         audio = nil,
-        lights = copyList(station and station.settings and station.settings.lights),
+        lights = copyList(settings.lights),
         lightType = 1,
         colorIndex = 1,
         speed = 1.0,
@@ -880,28 +878,20 @@ function StartDjCreator(station)
         lightsRev = 0,
         previewRev = -1,
         previews = {},
-        access = copyList(station and station.settings and station.settings.access),
-        jobs = nil, -- { list, byName }, fetched below
+        ghosts = {},
+        access = copyList(settings.access),
+        jobs = nil,
         picking = false,
         hudSent = '',
         hudAt = 0,
     }
-    local s = session
-    -- lights.lua hides this booth's own fixture props while the creator shows its copies.
+
+    session = s
     DjEditingStationId = station and station.id or nil
-    CreateThread(function()
-        local list = lib.callback.await('kariee_radio:dj:getJobs', false) or {}
-        local byName = {}
-        for _, job in ipairs(list) do byName[job.name] = job end
-        s.jobs = { list = list, byName = byName }
-    end)
+    CreateThread(function() fetchJobs(s) end)
     CreateThread(function() run(s) end)
 end
 
 AddEventHandler('onResourceStop', function(resourceName)
-    if resourceName ~= GetCurrentResourceName() or not session then return end
-    deleteGhost(session)
-    deleteLightGhost(session)
-    deletePreviews(session)
-    if session.picking then SetNuiFocus(false, false) end
+    if resourceName == GetCurrentResourceName() and session then cleanup(session) end
 end)

@@ -16,7 +16,6 @@ const focusables = () =>
     ) ?? [],
   ).filter((el) => el.offsetParent !== null)
 
-// Escape is handled centrally (App.vue peels layers in order); this only keeps Tab inside.
 function onKey(e: KeyboardEvent) {
   if (e.key !== 'Tab') return
   const list = focusables()

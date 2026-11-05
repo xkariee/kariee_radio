@@ -328,7 +328,6 @@ const updated = computed(() => {
 }
 </style>
 
-<!-- Shared by the four tab components (unscoped, so namespaced with admin-). -->
 <style>
 .admin-toolbar {
   display: flex;

@@ -183,8 +183,6 @@ function goToSource() {
   gap: 1.6rem;
 }
 
-/* ─── artwork + vinyl that slides out while playing ─── */
-
 .stage {
   position: relative;
   width: 100%;
@@ -217,7 +215,6 @@ function goToSource() {
   transition: transform 0.8s var(--ease-out);
 }
 
-/* slides out from behind the sleeve while playing (stays inside the rail: 5 + 72 + 72*.28 < 100) */
 .stage.playing .vinyl {
   transform: translateX(28%);
 }
@@ -289,8 +286,6 @@ function goToSource() {
     transform: rotate(360deg);
   }
 }
-
-/* ─── meta ─── */
 
 .np-meta {
   display: flex;
@@ -453,8 +448,6 @@ function goToSource() {
   font-size: 1.25rem;
   color: var(--text-faint);
 }
-
-/* ─── empty ─── */
 
 .rail-empty {
   flex: 1;

@@ -7,7 +7,6 @@ import CoverPicker from '../CoverPicker.vue'
 const name = ref('')
 const cover = ref<string | null>(null)
 const busy = ref(false)
-// A random hue for the preview, so a cover-less playlist already shows its generated art.
 const hue = Math.floor(Math.random() * 360)
 
 function close() {

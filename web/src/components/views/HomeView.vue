@@ -357,7 +357,6 @@ function plMeta(pl: Playlist) {
 
 .card-play {
   position: absolute;
-  /* sits on the artwork's bottom-right corner: art bottom is ~6.7rem above the card bottom */
   right: 2rem;
   bottom: 7.6rem;
   display: flex;

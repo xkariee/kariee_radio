@@ -6,7 +6,6 @@ import { formatDistance } from '../../utils/format'
 import Icon from '../Icon.vue'
 import Cover from '../Cover.vue'
 
-// Every radio playing on the server - who, what, where, how far, and who can hear it.
 const { state } = store
 const data = computed(() => state.admin.data!)
 
@@ -47,7 +46,6 @@ const list = computed(() => {
     .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
 })
 
-// Progress keeps ticking between refreshes.
 function progressOf(b: AdminBroadcast) {
   const extra = b.playing ? (state.now - state.admin.fetchedAt) / 1000 : 0
   return Math.min(b.song.duration || Infinity, b.progress + Math.max(0, extra))

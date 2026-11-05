@@ -20,7 +20,6 @@ const sharedNote = computed(() =>
     : 'Everyone at this booth sees and edits this queue.',
 )
 
-// Drag-and-drop reordering, with Alt+↑/↓ and the arrow buttons as the keyboard equivalent.
 const dragFrom = ref<number | null>(null)
 const dragOver = ref<number | null>(null)
 

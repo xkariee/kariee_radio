@@ -6,14 +6,11 @@ import Modal from './Modal.vue'
 import Dropdown from './Dropdown.vue'
 import Icon from './Icon.vue'
 
-// Job picker for the DJ booth creator's Access step (client/creator.lua). The client hands the
-// NUI focus over while it's open; Save / Cancel give it back. Each job gets a minimum grade.
 const { state } = store
 const jobs = state.creatorAccess?.jobs ?? []
 
 const lowestGrade = (job: JobInfo) => job.grades[0]?.grade ?? 0
 
-// job name -> minimum grade (snapped onto one of the job's grades)
 const picked = reactive<Record<string, number>>({})
 for (const rule of state.creatorAccess?.access ?? []) {
   const job = jobs.find((j) => j.name === rule.job)
@@ -58,8 +55,6 @@ function cancel() {
   store.closeAccessPicker(null)
 }
 
-// The radio isn't open behind this, so App.vue's Escape handling doesn't run - do it here.
-// (An open grade dropdown stops its own Escape before it gets this far.)
 function onKey(e: KeyboardEvent) {
   if (e.key !== 'Escape') return
   e.preventDefault()

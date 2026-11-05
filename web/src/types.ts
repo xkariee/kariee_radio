@@ -52,8 +52,6 @@ export interface Nav {
 export interface QueueEntry {
   qid: string
   songId: string
-  // Position in the list playback started from - lets shuffle be switched off again without
-  // losing the original order.
   order: number
 }
 
@@ -72,7 +70,6 @@ export interface Toast {
 export interface MenuAnchor {
   x: number
   y: number
-  // 'end' = the menu's right edge lines up with x (opened from a button on the right of a row).
   align: 'start' | 'end'
 }
 
@@ -83,18 +80,12 @@ export interface MenuState extends MenuAnchor {
   contextPlaylistId?: number | string
 }
 
-// ─── Bans / nearby / admin ───────────────────────────────────────────────
-
 export interface RadioBan {
   scope: 'dj' | 'all'
   reason: string
-  // unix seconds, null = permanent
   expires_at: number | null
 }
 
-// A broadcast somewhere on the server, as every client receives it (broadcastSync).
-// Beat grid for a DJ booth's disco lights, set by tapping along: `offset` is the song position
-// (seconds) of a downbeat, so it lines up for everyone no matter when they started listening.
 export interface Tempo {
   bpm: number
   offset: number
@@ -108,11 +99,9 @@ export interface LiveBroadcast {
   song: Song
   playing: boolean
   progress: number
-  // Date.now() when `progress` was received, so progress can tick locally
   syncedAt: number
 }
 
-// Pushed by client/broadcast.lua every tick a value changes.
 export interface Proximity {
   near: boolean
   volume: number
@@ -124,7 +113,6 @@ export interface Coords {
   z: number
 }
 
-// Filled in client-side (client/admin.lua) from coords.
 interface Located {
   coords?: Coords | null
   street?: string | null
@@ -166,12 +154,10 @@ export interface AdminStation extends Located {
     muffled?: number
     areaPoints: number
     lights: number
-    // jobs allowed to use the console ("police (grade 2+)"); missing = everyone
     access?: string[]
   }
 }
 
-// Pushed by client/creator.lua while the DJ booth creator is running (null = hidden).
 export interface CreatorHud {
   editing: boolean
   label?: string
@@ -185,7 +171,6 @@ export interface CreatorHud {
   warning?: string | null
 }
 
-// The creator's Access step: every ESX job, and which ones may use the console (grade = minimum).
 export interface JobInfo {
   name: string
   label: string
@@ -255,7 +240,6 @@ export interface ConfirmState {
   onConfirm: () => void
 }
 
-// Non-null = the ban dialog is open, optionally pre-filled with who to ban.
 export interface BanDraft {
   targetId?: number
   identifier?: string

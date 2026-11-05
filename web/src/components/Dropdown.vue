@@ -2,8 +2,6 @@
 import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue'
 import Icon from './Icon.vue'
 
-// Styled stand-in for <select>: the native popup can't be themed in CEF and looked out of place.
-// Follows the listbox pattern - arrows/Home/End move, Enter/Space pick, Esc/Tab close.
 const props = withDefaults(
   defineProps<{
     options: { value: T; label: string }[]
@@ -41,7 +39,6 @@ function hide(refocus = true) {
   if (refocus) trigger.value?.focus({ preventScroll: true })
 }
 
-// Fixed + teleported, so the scrolling content area can't clip it; flips up near the bottom.
 function place() {
   const t = trigger.value?.getBoundingClientRect()
   const l = list.value
@@ -203,7 +200,7 @@ onUnmounted(() => {
 
 .dd-list {
   position: fixed;
-  z-index: 350; /* above modals (300) - also used inside them */
+  z-index: 350;
   margin: 0;
   padding: 0.6rem;
   list-style: none;

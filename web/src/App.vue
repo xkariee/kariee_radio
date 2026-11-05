@@ -24,7 +24,6 @@ import { ACCENT_HUES, DEFAULT_HUE, applyAccent, applyFlags, applyScale, settings
 
 const { state } = store
 
-// Adaptive accent follows whatever is playing, so the whole radio re-tints per song.
 const accentSource = computed(() => {
   if (settings.accent === 'custom') return settings.customAccent
   if (settings.accent === 'adaptive') return store.currentSong.value?.hue ?? DEFAULT_HUE
@@ -34,12 +33,8 @@ watch(accentSource, applyAccent, { immediate: true })
 watch(() => settings.scale, applyScale, { immediate: true })
 watch(() => [settings.reduceMotion, settings.highContrast, settings.density], applyFlags, { immediate: true })
 
-// The admin tables need the width, so the Now Playing panel steps aside there.
 const railOpen = computed(() => settings.nowPlayingPanel && state.view !== 'admin')
 
-// `state.visible` mirrors the real NUI focus toggle - hidden until the client sends `open`
-// (via the keybind, DJ booth or car), driven entirely by client/main.lua in the FiveM build.
-// In the plain-browser dev fallback it just starts visible with a close/reopen tab.
 function close() {
   if (store.isNuiEnv) store.close()
   else state.visible = false
@@ -61,7 +56,6 @@ function onKey(e: KeyboardEvent) {
     return
   }
 
-  // Moving the nearby widget: its own keys (arrows/Enter) are handled on the widget itself.
   if (state.widgetEditing) return
 
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'k')) {
@@ -72,7 +66,6 @@ function onKey(e: KeyboardEvent) {
 
   if (isTyping(target) || store.anyModalOpen.value || state.menu || e.ctrlKey || e.metaKey || e.altKey) return
 
-  // Let focused controls keep their native keys (space on a button, arrows on a slider).
   const onButton = !!target?.closest('button, [role="button"], [role="menuitem"], a')
   const onSlider = target?.tagName === 'INPUT'
   const song = store.currentSong.value
@@ -156,7 +149,6 @@ onMounted(() => {
   store.bindNui()
   document.addEventListener('keydown', onKey)
   window.addEventListener('resize', applyScale)
-  // FiveM's CEF has no native context menu worth showing.
   document.addEventListener('contextmenu', preventMenu)
 })
 
@@ -186,8 +178,6 @@ function preventMenu(e: MouseEvent) {
           <TopBar @close="close" />
           <MainContent />
         </main>
-        <!-- Always mounted: the column width animates and the panel slides/fades at a fixed width,
-             so nothing inside reflows or pops while it opens and closes. -->
         <div class="rail-slot" :class="{ open: railOpen }">
           <NowPlayingPanel />
         </div>
@@ -230,9 +220,6 @@ function preventMenu(e: MouseEvent) {
   width: min(144rem, 96vw);
   height: min(86rem, 94vh);
   display: grid;
-  /* The rail column (which already includes its 1.2rem gap) animates via the registered
-     --rail-w property, so the main panel widens/narrows smoothly instead of snapping. The dock
-     spans main + rail, so its width never changes. */
   --rail-w: 0rem;
   grid-template-columns: 25.6rem 1.2rem minmax(0, 1fr) var(--rail-w);
   grid-template-rows: minmax(0, 1fr) auto;
@@ -247,7 +234,6 @@ function preventMenu(e: MouseEvent) {
   --rail-w: 32.2rem;
 }
 
-/* Fades away (but stays mounted) while the nearby widget is being moved. */
 .shell.out-of-way {
   opacity: 0;
   transform: scale(0.97);
@@ -279,8 +265,6 @@ function preventMenu(e: MouseEvent) {
   animation-delay: 90ms;
 }
 
-/* Fixed width, pinned to the column's left edge: as the column shrinks the panel is carried to
-   the right while it fades, as if sliding back behind the main panel. */
 .shell .rail-slot > :deep(.rail) {
   position: absolute;
   top: 0;
@@ -307,7 +291,6 @@ function preventMenu(e: MouseEvent) {
     visibility 0s;
 }
 
-/* shared floating-panel look, used by every top-level region */
 .shell :deep(.panel) {
   position: relative;
   background: var(--panel);
@@ -333,7 +316,6 @@ function preventMenu(e: MouseEvent) {
   flex-direction: column;
 }
 
-/* ambient tint that follows the accent (and therefore the song) */
 .main-wash {
   position: absolute;
   inset: 0 0 auto 0;

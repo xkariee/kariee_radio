@@ -16,7 +16,6 @@ const navItems = computed<{ view: ViewKind; label: string; icon: string }[]>(() 
   ...(state.isAdmin ? [{ view: 'admin' as ViewKind, label: 'Admin', icon: 'shield' }] : []),
 ])
 
-// Every client already receives every broadcast, so the admin badge needs no extra request.
 const liveCount = computed(() => Object.values(state.live).filter((b) => b.playing).length)
 
 function go(view: ViewKind) {

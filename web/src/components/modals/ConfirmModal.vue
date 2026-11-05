@@ -3,7 +3,6 @@ import { store } from '../../store'
 import Modal from '../Modal.vue'
 import Icon from '../Icon.vue'
 
-// Generic "are you sure?" for destructive admin actions. Focus lands on Cancel by default.
 const { state } = store
 
 function confirm() {

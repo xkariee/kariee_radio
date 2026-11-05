@@ -2,10 +2,9 @@
 import { computed, ref } from 'vue'
 import type { AdminActivity } from '../../types'
 import { store } from '../../store'
-import { clockTime, relativeTime } from '../../utils/format'
+import { clockTime, matchesQuery, relativeTime } from '../../utils/format'
 import Icon from '../Icon.vue'
 
-// Recent plays, admin actions, bans and booth changes - newest first. Answers "who played that?".
 const { state } = store
 const data = computed(() => state.admin.data!)
 
@@ -41,16 +40,11 @@ const META: Record<string, { icon: string; verb: string; tone: string }> = {
 
 const meta = (a: AdminActivity) => META[a.action] ?? { icon: 'activity', verb: a.action, tone: 'admin' }
 
-const list = computed(() => {
-  const needle = q.value.trim().toLowerCase()
-  return data.value.activity
+const list = computed(() =>
+  data.value.activity
     .filter((a) => filter.value === 'all' || GROUP[a.action] === filter.value)
-    .filter(
-      (a) =>
-        !needle ||
-        [a.actor, a.detail, a.label, a.target, String(a.actorId ?? '')].filter(Boolean).some((v) => String(v).toLowerCase().includes(needle)),
-    )
-})
+    .filter((a) => matchesQuery(q.value, [a.actor, a.detail, a.label, a.target, a.actorId])),
+)
 
 const filters: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -148,7 +142,6 @@ function copyLink(a: AdminActivity) {
   background: var(--fill-1);
 }
 
-/* the timeline rail running through the dots */
 .event::before {
   content: '';
   position: absolute;

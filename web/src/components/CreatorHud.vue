@@ -3,8 +3,6 @@ import { computed } from 'vue'
 import { store } from '../store'
 import Icon from './Icon.vue'
 
-// On-screen guide for the DJ booth creator (client/creator.lua): which step you're on, the
-// current option, live values (interior, range, lights...) and every key that does something.
 const hud = computed(() => store.state.creator)
 
 const swatch = (s: number[] | 'rainbow' | undefined) =>

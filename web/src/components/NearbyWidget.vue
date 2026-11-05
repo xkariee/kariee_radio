@@ -6,11 +6,8 @@ import { WIDGET_DEFAULT_POS, paletteFor, settings } from '../settings'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 
-// Small "now playing nearby" card: shows while you're in range of a DJ booth (or inside its
-// room) with the radio panel closed. In move mode it can be dragged anywhere on screen.
 const { state } = store
 
-// Shown while moving the widget when nothing happens to be in range.
 const preview: LiveBroadcast = {
   id: 'preview',
   kind: 'dj',
@@ -49,14 +46,12 @@ const position = computed(() => ({
   transform: `translate(${-settings.widgetX * 100}%, ${-settings.widgetY * 100}%)`,
 }))
 
-// ─── move mode ───
 const layer = ref<HTMLElement | null>(null)
 const card = ref<HTMLElement | null>(null)
 const dragging = ref(false)
 let grab = { dx: 0, dy: 0 }
 
 const clamp = (v: number) => Math.min(1, Math.max(0, v))
-// Sticks to the edges and the centre line so it's easy to line up.
 const snap = (v: number) => (v < 0.015 ? 0 : v > 0.985 ? 1 : Math.abs(v - 0.5) < 0.015 ? 0.5 : v)
 
 function onDown(e: PointerEvent) {
@@ -259,7 +254,6 @@ const corners = [
     inset 0 0.1rem 0 rgba(255, 255, 255, 0.06);
 }
 
-/* tinted by the song's own colour, like the radio's adaptive accent */
 .glow {
   position: absolute;
   inset: 0;
@@ -423,8 +417,6 @@ const corners = [
   color: #fff;
 }
 
-/* ─── move mode chrome ─── */
-
 .scrim {
   position: fixed;
   inset: 0;
@@ -498,8 +490,6 @@ const corners = [
   border-left: 0.1rem solid var(--line);
   border-right: 0.1rem solid var(--line);
 }
-
-/* ─── transitions ─── */
 
 .widget-enter-active {
   transition:

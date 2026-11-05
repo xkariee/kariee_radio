@@ -1,14 +1,18 @@
 import type { Invite, Song, Playlist } from '../types'
 
-// Only used when running `npm run dev` in a plain browser (no GetParentResourceName), so the UI
-// can still be iterated on standalone. None of this is real playable media or real identifiers.
-
 export const currentUser = { identifier: 'dev:local', name: 'Kariee' }
 
 const otherUsers = [
   { identifier: 'dev:skyla', name: 'Skyla' },
   { identifier: 'dev:drex', name: 'Drex' },
   { identifier: 'dev:mako', name: 'Mako' },
+]
+
+export const devPlayers = [
+  { id: 12, name: 'Skyla Reyes' },
+  { id: 31, name: 'Drex Monroe' },
+  { id: 47, name: 'Mako Tanaka' },
+  { id: 58, name: 'Lena Voss' },
 ]
 
 export const songs: Song[] = [
@@ -75,7 +79,6 @@ export const playlists: Playlist[] = [
   },
 ]
 
-// A DJ booth "in range", so the nearby now-playing widget shows when the panel is closed in dev.
 export const devLiveBroadcast = {
   id: 'dj:1',
   kind: 'dj' as const,
@@ -96,7 +99,6 @@ const toServerSong = (s: Song) => ({
   hue: s.hue,
 })
 
-// Same shape server/admin.lua + client/admin.lua return for `adminGetData`.
 export function devAdminData() {
   const now = Math.floor(Date.now() / 1000)
   return {

@@ -28,7 +28,6 @@ function onSeekCommit(e: Event) {
 
 const volume = computed(() => (state.muted ? 0 : state.volume))
 
-// Put the thumb back on the real value - a refused change (locked DJ booth) would leave it behind.
 function onVolumeInput(e: Event) {
   const el = e.target as HTMLInputElement
   store.setVolume(Number(el.value))
@@ -52,7 +51,6 @@ const repeatLabel = computed(() => {
 
 const liked = computed(() => !!song.value && store.isFavorite(song.value.id))
 
-// ─── sleep timer popover ───
 const sleepBtn = ref<HTMLElement | null>(null)
 const sleepMenu = ref<HTMLElement | null>(null)
 

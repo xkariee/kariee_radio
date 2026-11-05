@@ -86,8 +86,6 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
         </div>
         <p class="status">{{ status }}</p>
 
-        <!-- Taps on press, not release, so the timing is what you felt. Alternating the animation
-             name restarts the flash on every tap without re-creating (and unfocusing) the button. -->
         <button
           ref="tapBtn"
           class="btn btn-primary tap"

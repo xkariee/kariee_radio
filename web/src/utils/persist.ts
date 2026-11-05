@@ -1,30 +1,28 @@
-// NUI localStorage survives game restarts, but can still throw or come back empty - every
-// read/write here degrades to "use the defaults" instead of breaking the UI.
-
 const PREFIX = 'kariee_radio:'
 
-export function loadJson<T>(key: string, fallback: T): T {
+function read(key: string): unknown {
   try {
     const raw = localStorage.getItem(PREFIX + key)
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
+    return raw ? JSON.parse(raw) : null
   } catch {
-    return fallback
+    return null
   }
 }
 
+export function loadJson<T extends object>(key: string, fallback: T): T {
+  const saved = read(key)
+  return saved && typeof saved === 'object' ? { ...fallback, ...saved } : fallback
+}
+
 export function loadList(key: string): string[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(PREFIX + key) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []
-  } catch {
-    return []
-  }
+  const saved = read(key)
+  return Array.isArray(saved) ? saved.filter((item): item is string => typeof item === 'string') : []
 }
 
 export function saveJson(key: string, value: unknown) {
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify(value))
   } catch {
-    // storage full or blocked - settings just won't persist this session
+    return
   }
 }

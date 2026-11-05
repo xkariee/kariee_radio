@@ -9,7 +9,6 @@ import Cover from '../Cover.vue'
 import TrackRow from '../TrackRow.vue'
 import Dropdown from '../Dropdown.vue'
 
-// Playlist pages, Liked Songs and Recently Played all share this layout.
 const { state } = store
 
 const isRecent = computed(() => state.view === 'recent')
@@ -78,7 +77,7 @@ const members = computed(() => {
 
 const heroStyle = computed(() => {
   if (pl.value?.isDefault) return { '--h1': '330', '--h2': '268' }
-  if (isRecent.value) return {} // .recent uses the live accent instead
+  if (isRecent.value) return {}
   const h = pl.value?.hue ?? 200
   return { '--h1': String(h), '--h2': String((h + 40) % 360) }
 })

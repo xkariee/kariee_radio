@@ -39,7 +39,6 @@ function playTop() {
       </div>
     </div>
 
-    <!-- Browse: nothing typed yet -->
     <template v-if="browsing">
       <section v-if="state.recentSearches.length" class="block" aria-labelledby="recent-searches">
         <div class="block-head">
@@ -79,7 +78,6 @@ function playTop() {
       </p>
     </template>
 
-    <!-- Loading -->
     <div v-else-if="state.searching" class="results" aria-busy="true" aria-label="Searching">
       <div class="top-grid">
         <div class="top-card skeleton-card">
