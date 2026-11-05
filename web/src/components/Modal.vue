@@ -41,7 +41,6 @@ onMounted(async () => {
 onUnmounted(() => {
   if (returnFocus && document.contains(returnFocus)) returnFocus.focus({ preventScroll: true })
 })
-
 </script>
 
 <template>

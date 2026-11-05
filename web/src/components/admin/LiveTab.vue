@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { AdminBroadcast } from '../../types'
 import { store } from '../../store'
-import { formatDistance } from '../../utils/format'
+import { byDistance, formatDistance, formatTime, matchesQuery } from '../../utils/format'
 import Icon from '../Icon.vue'
 import Cover from '../Cover.vue'
 
@@ -27,24 +27,18 @@ const KIND: Record<AdminBroadcast['kind'], { icon: string; label: string }> = {
   radiocar: { icon: 'car', label: 'Car radio' },
 }
 
-const list = computed(() => {
-  const radius = data.value.nearbyRadius
-  const needle = q.value.trim().toLowerCase()
-  return data.value.broadcasts
-    .filter((b) => {
-      if (filter.value === 'near') return (b.distance ?? Infinity) <= radius
-      if (filter.value !== 'all') return b.kind === filter.value
-      return true
-    })
-    .filter(
-      (b) =>
-        !needle ||
-        [b.song.title, b.song.artist, b.ownerName, b.label, b.street, b.zone, String(b.ownerId ?? '')]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(needle)),
-    )
-    .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
-})
+function inFilter(b: AdminBroadcast) {
+  if (filter.value === 'all') return true
+  if (filter.value === 'near') return (b.distance ?? Infinity) <= data.value.nearbyRadius
+  return b.kind === filter.value
+}
+
+const list = computed(() =>
+  data.value.broadcasts
+    .filter(inFilter)
+    .filter((b) => matchesQuery(q.value, [b.song.title, b.song.artist, b.ownerName, b.label, b.street, b.zone, b.ownerId]))
+    .sort(byDistance),
+)
 
 function progressOf(b: AdminBroadcast) {
   const extra = b.playing ? (state.now - state.admin.fetchedAt) / 1000 : 0
@@ -99,7 +93,7 @@ const isMe = (b: AdminBroadcast) => b.ownerId != null && b.ownerId === data.valu
           <span class="admin-sub truncate">{{ b.song.artist }}</span>
           <span class="mini">
             <span class="mini-bar"><span :style="{ width: pct(b) }" /></span>
-            <span class="admin-faint">{{ store.formatTime(progressOf(b)) }} / {{ store.formatTime(b.song.duration) }}</span>
+            <span class="admin-faint">{{ formatTime(progressOf(b)) }} / {{ formatTime(b.song.duration) }}</span>
           </span>
         </div>
 

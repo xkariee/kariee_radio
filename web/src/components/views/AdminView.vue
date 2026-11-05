@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { AdminTab } from '../../types'
 import { store } from '../../store'
+import { plural } from '../../utils/format'
 import Icon from '../Icon.vue'
 import LiveTab from '../admin/LiveTab.vue'
 import BoothsTab from '../admin/BoothsTab.vue'
@@ -20,7 +21,7 @@ const stats = computed(() => {
   const liveBooths = d.stations.filter((s) => s.playing).length
   const onlineBans = d.bans.filter((b) => b.online).length
   return [
-    { tab: 'live' as AdminTab, icon: 'radio', value: playing, label: 'Playing now', sub: `${d.broadcasts.length} radio${d.broadcasts.length === 1 ? '' : 's'} on` },
+    { tab: 'live' as AdminTab, icon: 'radio', value: playing, label: 'Playing now', sub: `${plural(d.broadcasts.length, 'radio')} on` },
     { tab: 'live' as AdminTab, icon: 'target', value: near, label: 'Near you', sub: `within ${d.nearbyRadius} m` },
     { tab: 'booths' as AdminTab, icon: 'speaker', value: d.stations.length, label: 'DJ booths', sub: `${liveBooths} live` },
     { tab: 'bans' as AdminTab, icon: 'ban', value: d.bans.length, label: 'Active bans', sub: `${onlineBans} online now` },

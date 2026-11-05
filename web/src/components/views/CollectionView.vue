@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { PlayingFrom, Song } from '../../types'
 import { store } from '../../store'
+import { formatLength, matchesQuery, plural } from '../../utils/format'
 import { colorForId } from '../../utils/avatar'
 import { anchorFrom } from '../../utils/menu'
 import Icon from '../Icon.vue'
@@ -27,15 +28,15 @@ const sortOptions = computed<{ value: SortKey; label: string }[]>(() => [
 ])
 const find = ref('')
 
+const SORTERS: Record<Exclude<SortKey, 'custom'>, (a: Song, b: Song) => number> = {
+  title: (a, b) => a.title.localeCompare(b.title),
+  artist: (a, b) => a.artist.localeCompare(b.artist),
+  duration: (a, b) => a.duration - b.duration,
+}
+
 const shown = computed(() => {
-  const q = find.value.trim().toLowerCase()
-  let list = q
-    ? songs.value.filter((s) => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q))
-    : songs.value
-  if (sort.value === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title))
-  if (sort.value === 'artist') list = [...list].sort((a, b) => a.artist.localeCompare(b.artist))
-  if (sort.value === 'duration') list = [...list].sort((a, b) => a.duration - b.duration)
-  return list
+  const list = songs.value.filter((s) => matchesQuery(find.value, [s.title, s.artist]))
+  return sort.value === 'custom' ? list : list.sort(SORTERS[sort.value])
 })
 
 const totalLength = computed(() => songs.value.reduce((sum, s) => sum + (s.duration || 0), 0))
@@ -117,8 +118,8 @@ const canEdit = computed(() => !!pl.value && store.isOwnerOf(pl.value))
           </span>
           <span v-if="pl && !pl.isDefault" class="owner">{{ pl.ownerName }}</span>
           <span v-if="members.length > 1" class="dotsep">{{ members.length }} members</span>
-          <span class="dotsep">{{ songs.length }} song{{ songs.length === 1 ? '' : 's' }}</span>
-          <span v-if="totalLength" class="dotsep">{{ store.formatLength(totalLength) }}</span>
+          <span class="dotsep">{{ plural(songs.length, 'song') }}</span>
+          <span v-if="totalLength" class="dotsep">{{ formatLength(totalLength) }}</span>
         </div>
       </div>
     </header>

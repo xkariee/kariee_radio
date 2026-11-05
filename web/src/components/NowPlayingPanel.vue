@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { store } from '../store'
 import { settings } from '../settings'
+import { formatTime } from '../utils/format'
 import { anchorFrom } from '../utils/menu'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
@@ -19,7 +20,7 @@ const sleepLabel = computed(() => {
   if (state.sleepEndOfTrack) return 'Stops after this song'
   const s = store.sleepRemaining.value
   if (s == null) return null
-  return `Stops in ${store.formatTime(s)}`
+  return `Stops in ${formatTime(s)}`
 })
 
 function goToSource() {

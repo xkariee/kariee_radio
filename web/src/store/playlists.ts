@@ -19,6 +19,8 @@ export function playlistSongs(id: PlaylistId) {
   return songsByIds(playlistById(id)?.songIds ?? [])
 }
 
+export const library = computed(() => [...state.playlists].sort((a, b) => Number(!!b.isDefault) - Number(!!a.isDefault)))
+
 export const activePlaylist = computed(() =>
   state.activePlaylistId != null ? (playlistById(state.activePlaylistId) ?? null) : null,
 )

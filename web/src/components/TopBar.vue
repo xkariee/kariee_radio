@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import type { BroadcastKind } from '../types'
 import { store } from '../store'
 import Icon from './Icon.vue'
 
-const emit = defineEmits<{ close: [] }>()
 const { state } = store
 
 const input = ref<HTMLInputElement | null>(null)
@@ -26,18 +26,18 @@ function onEsc() {
   else input.value?.blur()
 }
 
-const context = computed(() => {
-  switch (state.contextKind) {
-    case 'radiocar':
-      return { icon: 'car', label: 'Car radio', help: 'Everyone in this vehicle can control playback and the queue.' }
-    case 'dj':
-      return { icon: 'speaker', label: 'DJ booth', help: 'Anyone at the booth can control playback and add to the queue.' }
-    case 'radio':
-      return { icon: 'radio', label: 'Personal radio', help: 'Only you control this radio. Players nearby can hear it.' }
-    default:
-      return null
-  }
-})
+function clearSearch() {
+  state.searchQuery = ''
+  input.value?.focus()
+}
+
+const CONTEXTS: Record<BroadcastKind, { icon: string; label: string; help: string }> = {
+  radiocar: { icon: 'car', label: 'Car radio', help: 'Everyone in this vehicle can control playback and the queue.' },
+  dj: { icon: 'speaker', label: 'DJ booth', help: 'Anyone at the booth can control playback and add to the queue.' },
+  radio: { icon: 'radio', label: 'Personal radio', help: 'Only you control this radio. Players nearby can hear it.' },
+}
+
+const context = computed(() => (state.contextKind ? CONTEXTS[state.contextKind] : null))
 </script>
 
 <template>
@@ -72,7 +72,7 @@ const context = computed(() => {
         @keydown.esc.stop.prevent="onEsc"
       />
       <Transition name="pop" mode="out-in">
-        <button v-if="state.searchQuery" class="clear" aria-label="Clear search" @click="state.searchQuery = ''; input?.focus()">
+        <button v-if="state.searchQuery" class="clear" aria-label="Clear search" @click="clearSearch">
           <Icon name="x" :size="14" />
         </button>
         <kbd v-else aria-hidden="true">/</kbd>
@@ -93,7 +93,7 @@ const context = computed(() => {
       <button class="icon-btn" aria-label="Settings" title="Settings" @click="state.settingsOpen = true">
         <Icon name="settings" :size="19" />
       </button>
-      <button class="icon-btn close" aria-label="Close radio" title="Close (Esc)" @click="emit('close')">
+      <button class="icon-btn close" aria-label="Close radio" title="Close (Esc)" @click="store.close()">
         <Icon name="x" :size="20" />
       </button>
     </div>

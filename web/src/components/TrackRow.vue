@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { PlayingFrom, Song } from '../types'
 import { store } from '../store'
+import { formatTime } from '../utils/format'
 import { anchorBelow, anchorFrom } from '../utils/menu'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
@@ -52,11 +53,10 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-const label = computed(
-  () =>
-    `${props.song.title} by ${props.song.artist}, ${store.formatTime(props.song.duration)}` +
-    (isCurrent.value ? (isLive.value ? ', now playing' : ', paused') : ''),
-)
+const label = computed(() => {
+  const state = isCurrent.value ? (isLive.value ? ', now playing' : ', paused') : ''
+  return `${props.song.title} by ${props.song.artist}, ${formatTime(props.song.duration)}${state}`
+})
 </script>
 
 <template>
@@ -106,7 +106,7 @@ const label = computed(
       </button>
     </span>
 
-    <span class="dur">{{ store.formatTime(song.duration) }}</span>
+    <span class="dur">{{ formatTime(song.duration) }}</span>
 
     <button class="icon-btn sm reveal" tabindex="-1" aria-label="More options" title="More options" @click.stop="openMenu">
       <Icon name="more-horizontal" :size="18" />

@@ -35,15 +35,13 @@ watch(() => [settings.reduceMotion, settings.highContrast, settings.density], ap
 
 const railOpen = computed(() => settings.nowPlayingPanel && state.view !== 'admin')
 
-function close() {
-  if (store.isNuiEnv) store.close()
-  else state.visible = false
-}
+const TEXT_INPUTS = ['range', 'checkbox', 'radio', 'button']
+const ARROWS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown']
 
 function isTyping(el: HTMLElement | null) {
   if (!el) return false
   if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true
-  return el.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((el as HTMLInputElement).type)
+  return el.tagName === 'INPUT' && !TEXT_INPUTS.includes((el as HTMLInputElement).type)
 }
 
 function onKey(e: KeyboardEvent) {
@@ -52,7 +50,7 @@ function onKey(e: KeyboardEvent) {
 
   if (e.key === 'Escape') {
     e.preventDefault()
-    if (!store.dismissTopLayer()) close()
+    if (!store.dismissTopLayer()) store.close()
     return
   }
 
@@ -66,73 +64,58 @@ function onKey(e: KeyboardEvent) {
 
   if (isTyping(target) || store.anyModalOpen.value || state.menu || e.ctrlKey || e.metaKey || e.altKey) return
 
-  const onButton = !!target?.closest('button, [role="button"], [role="menuitem"], a')
-  const onSlider = target?.tagName === 'INPUT'
-  const song = store.currentSong.value
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+  if (ARROWS.includes(key)) {
+    if (target?.tagName === 'INPUT') return
+    e.preventDefault()
+  }
 
-  switch (e.key) {
+  switch (key) {
     case ' ':
-      if (onButton) return
+      if (target?.closest('button, [role="button"], [role="menuitem"], a')) return
       e.preventDefault()
       store.togglePlay()
       break
     case 'k':
-    case 'K':
       store.togglePlay()
       break
     case 'ArrowRight':
-      if (onSlider) return
-      e.preventDefault()
       if (e.shiftKey) store.next()
       else store.seekBy(5)
       break
     case 'ArrowLeft':
-      if (onSlider) return
-      e.preventDefault()
       if (e.shiftKey) store.prev()
       else store.seekBy(-5)
       break
     case 'ArrowUp':
-      if (onSlider) return
-      e.preventDefault()
       store.setVolume(state.volume + 5)
       break
     case 'ArrowDown':
-      if (onSlider) return
-      e.preventDefault()
       store.setVolume(state.volume - 5)
       break
     case 'm':
-    case 'M':
       store.toggleMute()
       break
     case 's':
-    case 'S':
       store.toggleShuffle(true)
       break
     case 'r':
-    case 'R':
       if (store.shared.value) store.toast('Repeat is not available on shared radios', 'repeat')
       else store.cycleRepeat(true)
       break
     case 'l':
-    case 'L':
-      if (song) store.toggleFavorite(song.id)
+      if (store.currentSong.value) store.toggleFavorite(store.currentSong.value.id)
       break
     case 't':
-    case 'T':
       if (!e.repeat) store.tapTempo()
       break
     case 'q':
-    case 'Q':
       store.setView(state.view === 'queue' ? 'home' : 'queue')
       break
     case 'n':
-    case 'N':
       settings.nowPlayingPanel = !settings.nowPlayingPanel
       break
     case 'h':
-    case 'H':
       store.setView('home')
       break
     case '/':
@@ -143,6 +126,10 @@ function onKey(e: KeyboardEvent) {
       state.shortcutsOpen = true
       break
   }
+}
+
+function preventMenu(e: MouseEvent) {
+  e.preventDefault()
 }
 
 onMounted(() => {
@@ -157,10 +144,6 @@ onUnmounted(() => {
   window.removeEventListener('resize', applyScale)
   document.removeEventListener('contextmenu', preventMenu)
 })
-
-function preventMenu(e: MouseEvent) {
-  e.preventDefault()
-}
 </script>
 
 <template>
@@ -175,7 +158,7 @@ function preventMenu(e: MouseEvent) {
         <Sidebar class="area-side" style="--i: 0" />
         <main class="panel main-panel area-main" style="--i: 1" aria-label="Browse music">
           <div class="main-wash" aria-hidden="true" />
-          <TopBar @close="close" />
+          <TopBar />
           <MainContent />
         </main>
         <div class="rail-slot" :class="{ open: railOpen }">
@@ -228,6 +211,10 @@ function preventMenu(e: MouseEvent) {
     'side . dock dock';
   column-gap: 0;
   row-gap: 1.2rem;
+  transition:
+    --rail-w 0.55s var(--ease-out),
+    opacity 0.25s var(--ease),
+    transform 0.3s var(--ease-out);
 }
 
 .shell.rail-open {
@@ -238,13 +225,6 @@ function preventMenu(e: MouseEvent) {
   opacity: 0;
   transform: scale(0.97);
   pointer-events: none;
-}
-
-.shell {
-  transition:
-    --rail-w 0.55s var(--ease-out),
-    opacity 0.25s var(--ease),
-    transform 0.3s var(--ease-out);
 }
 
 .area-side {

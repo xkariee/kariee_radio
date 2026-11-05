@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { store } from '../store'
 import { settings } from '../settings'
+import { formatTime } from '../utils/format'
+import { usePopover } from '../composables/usePopover'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 import LightSync from './LightSync.vue'
@@ -77,44 +79,22 @@ function isSelected(v: number | 'end' | null) {
   return false
 }
 
-function toggleSleep() {
-  state.popover = state.popover === 'sleep' ? null : 'sleep'
-}
-
-watch(
-  () => state.popover,
-  async (p) => {
-    if (p === 'sleep') {
-      await nextTick()
-      sleepMenu.value?.querySelector<HTMLElement>('[role="menuitemradio"]')?.focus()
-      document.addEventListener('mousedown', onOutside)
-    } else {
-      document.removeEventListener('mousedown', onOutside)
-    }
-  },
-)
-
-function onOutside(e: MouseEvent) {
-  const t = e.target as Node
-  if (!sleepMenu.value?.contains(t) && !sleepBtn.value?.contains(t)) state.popover = null
-}
+const sleepItems = () => Array.from(sleepMenu.value?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])
+const { open: sleepOpen, toggle: toggleSleep, close: closeSleep } = usePopover('sleep', sleepBtn, sleepMenu, () => sleepItems()[0])
 
 function onMenuKey(e: KeyboardEvent) {
-  const items = Array.from(sleepMenu.value?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])
-  const i = items.indexOf(document.activeElement as HTMLElement)
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault()
-    e.stopPropagation()
+    const items = sleepItems()
+    const i = items.indexOf(document.activeElement as HTMLElement)
     items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus()
   } else if (e.key === 'Tab' || e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    state.popover = null
-    sleepBtn.value?.focus()
+    closeSleep()
+  } else {
+    return
   }
+  e.preventDefault()
+  e.stopPropagation()
 }
-
-onUnmounted(() => document.removeEventListener('mousedown', onOutside))
 </script>
 
 <template>
@@ -190,7 +170,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
       </div>
 
       <div class="timeline">
-        <span class="time" aria-hidden="true">{{ store.formatTime(shownProgress) }}</span>
+        <span class="time" aria-hidden="true">{{ formatTime(shownProgress) }}</span>
         <input
           class="range seek"
           type="range"
@@ -201,7 +181,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
           :style="{ '--pct': pct(shownProgress, duration) }"
           :disabled="!song"
           aria-label="Seek"
-          :aria-valuetext="`${store.formatTime(shownProgress)} of ${store.formatTime(duration)}`"
+          :aria-valuetext="`${formatTime(shownProgress)} of ${formatTime(duration)}`"
           @input="onSeekInput"
           @change="onSeekCommit"
         />
@@ -210,7 +190,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
           :aria-label="settings.showRemaining ? 'Showing time remaining. Show total length' : 'Showing total length. Show time remaining'"
           @click="settings.showRemaining = !settings.showRemaining"
         >
-          {{ settings.showRemaining && song ? `-${store.formatTime(duration - shownProgress)}` : store.formatTime(duration) }}
+          {{ settings.showRemaining && song ? `-${formatTime(duration - shownProgress)}` : formatTime(duration) }}
         </button>
       </div>
     </div>
@@ -224,7 +204,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
           class="icon-btn"
           :class="{ on: sleepActive }"
           aria-haspopup="menu"
-          :aria-expanded="state.popover === 'sleep'"
+          :aria-expanded="sleepOpen"
           :aria-label="sleepActive ? `Sleep timer, ${sleepBadge} left` : 'Sleep timer'"
           title="Sleep timer"
           @click="toggleSleep"
@@ -233,7 +213,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
           <span v-if="sleepBadge" class="badge" aria-hidden="true">{{ sleepBadge }}</span>
         </button>
         <Transition name="pop">
-          <div v-if="state.popover === 'sleep'" ref="sleepMenu" class="popover" role="menu" aria-label="Sleep timer" @keydown="onMenuKey">
+          <div v-if="sleepOpen" ref="sleepMenu" class="popover" role="menu" aria-label="Sleep timer" @keydown="onMenuKey">
             <p class="pop-title">Stop playing after…</p>
             <button
               v-for="o in sleepOptions"

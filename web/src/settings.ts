@@ -36,7 +36,7 @@ export const DEFAULT_HUE = ACCENT_HUES.rose
 const prefersReducedMotion =
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
-export const defaultSettings: Settings = {
+const defaultSettings: Settings = {
   accent: 'adaptive',
   customAccent: '#ff6aa7',
   scale: 1,
@@ -86,7 +86,7 @@ function contrast(a: Rgb, b: Rgb) {
 const hex = (rgb: Rgb) => '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')
 const rgba = ([r, g, b]: Rgb, a: number) => `rgba(${r}, ${g}, ${b}, ${a})`
 
-export function hexToHsl(value: string): [number, number, number] | null {
+function hexToHsl(value: string): [number, number, number] | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(value.trim())
   if (!m) return null
   const n = parseInt(m[1], 16)

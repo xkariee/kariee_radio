@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { clamp } from '../utils/format'
 
 const model = defineModel<string>({ required: true })
 
@@ -45,7 +46,7 @@ watch(
   { immediate: true },
 )
 
-function emit() {
+function commit() {
   lastEmitted = hsvToHex(h.value, s.value, v.value)
   model.value = lastEmitted
   draft.value = lastEmitted.slice(1).toUpperCase()
@@ -54,13 +55,12 @@ function emit() {
 
 const area = ref<HTMLElement | null>(null)
 const dragging = ref(false)
-const clamp = (x: number) => Math.min(1, Math.max(0, x))
 
 function fromPointer(e: PointerEvent) {
   const r = area.value!.getBoundingClientRect()
   s.value = clamp((e.clientX - r.left) / r.width)
   v.value = 1 - clamp((e.clientY - r.top) / r.height)
-  emit()
+  commit()
 }
 
 function onDown(e: PointerEvent) {
@@ -91,12 +91,12 @@ function onAreaKey(e: KeyboardEvent) {
   e.preventDefault()
   e.stopPropagation()
   moves[e.key]()
-  emit()
+  commit()
 }
 
 function onHue(e: Event) {
   h.value = Number((e.target as HTMLInputElement).value)
-  emit()
+  commit()
 }
 
 function onHexInput(e: Event) {

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Song } from '../types'
 import { store } from '../store'
+import { plural } from '../utils/format'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 
@@ -64,20 +65,18 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-function onDocDown(e: MouseEvent) {
-  if (state.menu && menuEl.value && !menuEl.value.contains(e.target as Node)) store.closeMenu()
-}
-function onScroll(e: Event) {
+function closeIfOutside(e: Event) {
   if (state.menu && menuEl.value && !menuEl.value.contains(e.target as Node)) store.closeMenu()
 }
 
 onMounted(() => {
-  document.addEventListener('mousedown', onDocDown)
-  document.addEventListener('scroll', onScroll, true)
+  document.addEventListener('mousedown', closeIfOutside)
+  document.addEventListener('scroll', closeIfOutside, true)
 })
+
 onUnmounted(() => {
-  document.removeEventListener('mousedown', onDocDown)
-  document.removeEventListener('scroll', onScroll, true)
+  document.removeEventListener('mousedown', closeIfOutside)
+  document.removeEventListener('scroll', closeIfOutside, true)
 })
 
 function run(fn: () => void) {
@@ -179,7 +178,7 @@ function playPlaylist(shuffle: boolean) {
           <Cover :src="playlist.cover" :hue="playlist.hue" :size="40" :radius="8" :icon="playlist.isDefault ? 'heart' : 'music'" />
           <span class="head-text">
             <span class="head-title truncate">{{ playlist.name }}</span>
-            <span class="head-sub">{{ playlist.songIds.length }} songs</span>
+            <span class="head-sub">{{ plural(playlist.songIds.length, 'song') }}</span>
           </span>
         </div>
 

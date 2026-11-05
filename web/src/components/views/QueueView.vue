@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { store } from '../../store'
+import { formatLength, formatTime, plural } from '../../utils/format'
 import { anchorFrom } from '../../utils/menu'
 import Icon from '../Icon.vue'
 import Cover from '../Cover.vue'
@@ -57,24 +58,23 @@ function move(i: number, delta: number, focusRow = false) {
 
 function onRowKey(e: KeyboardEvent, i: number, qid: string) {
   if (e.target !== e.currentTarget) return
-  if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-    e.preventDefault()
-    e.stopPropagation()
-    move(i, e.key === 'ArrowUp' ? -1 : 1, true)
-  } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-    e.preventDefault()
-    e.stopPropagation()
+  const vertical = e.key === 'ArrowUp' || e.key === 'ArrowDown'
+  const step = e.key === 'ArrowDown' ? 1 : -1
+
+  if (vertical && e.altKey) {
+    move(i, step, true)
+  } else if (vertical) {
     const rows = document.querySelectorAll<HTMLElement>('.q-row')
-    rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]?.focus()
+    rows[Math.max(0, Math.min(rows.length - 1, i + step))]?.focus()
   } else if (e.key === 'Enter') {
-    e.preventDefault()
-    e.stopPropagation()
     store.jumpTo(qid)
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
-    e.preventDefault()
-    e.stopPropagation()
     store.removeFromQueue(qid)
+  } else {
+    return
   }
+  e.preventDefault()
+  e.stopPropagation()
 }
 </script>
 
@@ -125,7 +125,7 @@ function onRowKey(e: KeyboardEvent, i: number, qid: string) {
       <div class="next-head">
         <h2 id="next-label" class="eyebrow label">Next up</h2>
         <span v-if="upNext.length" class="next-stats">
-          {{ upNext.length }} song{{ upNext.length === 1 ? '' : 's' }} · {{ store.formatLength(upNextLength) }}
+          {{ plural(upNext.length, 'song') }} · {{ formatLength(upNextLength) }}
         </span>
       </div>
 
@@ -166,7 +166,7 @@ function onRowKey(e: KeyboardEvent, i: number, qid: string) {
             <span class="q-title truncate">{{ store.songById(entry.songId)?.title }}</span>
             <span class="q-artist truncate">{{ store.songById(entry.songId)?.artist }}</span>
           </span>
-          <span class="q-dur">{{ store.formatTime(store.songById(entry.songId)?.duration ?? 0) }}</span>
+          <span class="q-dur">{{ formatTime(store.songById(entry.songId)?.duration ?? 0) }}</span>
           <span class="q-actions">
             <button class="icon-btn sm" tabindex="-1" aria-label="Move up" title="Move up (Alt+↑)" :disabled="i === 0" @click="move(i, -1)">
               <Icon name="arrow-up" :size="15" />

@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import type { LiveBroadcast } from '../types'
 import { store } from '../store'
 import { WIDGET_DEFAULT_POS, paletteFor, settings } from '../settings'
+import { clamp, formatTime } from '../utils/format'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 
@@ -51,7 +52,6 @@ const card = ref<HTMLElement | null>(null)
 const dragging = ref(false)
 let grab = { dx: 0, dy: 0 }
 
-const clamp = (v: number) => Math.min(1, Math.max(0, v))
 const snap = (v: number) => (v < 0.015 ? 0 : v > 0.985 ? 1 : Math.abs(v - 0.5) < 0.015 ? 0.5 : v)
 
 function onDown(e: PointerEvent) {
@@ -191,8 +191,8 @@ const corners = [
               <template v-if="!compact">
                 <span class="bar"><span :style="{ width: pct }" /></span>
                 <span class="times">
-                  <span>{{ store.formatTime(progress) }}</span>
-                  <span>{{ store.formatTime(duration) }}</span>
+                  <span>{{ formatTime(progress) }}</span>
+                  <span>{{ formatTime(duration) }}</span>
                 </span>
               </template>
             </div>

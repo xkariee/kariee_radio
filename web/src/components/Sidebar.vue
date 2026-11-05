@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import type { Playlist, ViewKind } from '../types'
 import { store } from '../store'
+import { matchesQuery, plural } from '../utils/format'
 import { anchorFrom } from '../utils/menu'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
@@ -35,11 +36,12 @@ const findInput = ref<HTMLInputElement | null>(null)
 
 async function toggleFind() {
   findOpen.value = !findOpen.value
-  if (!findOpen.value) findQuery.value = ''
-  else {
-    await nextTick()
-    findInput.value?.focus()
+  if (!findOpen.value) {
+    findQuery.value = ''
+    return
   }
+  await nextTick()
+  findInput.value?.focus()
 }
 
 function onFindEsc() {
@@ -47,17 +49,16 @@ function onFindEsc() {
   else findOpen.value = false
 }
 
-const playlists = computed(() => {
-  let list = [...state.playlists].sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0))
-  if (state.libraryFilter === 'mine') list = list.filter((p) => p.ownerIdentifier === state.identifier)
-  if (state.libraryFilter === 'shared') list = list.filter(store.isShareable)
-  const q = findQuery.value.trim().toLowerCase()
-  if (q) list = list.filter((p) => p.name.toLowerCase().includes(q))
-  return list
-})
+function inFilter(pl: Playlist) {
+  if (state.libraryFilter === 'mine') return pl.ownerIdentifier === state.identifier
+  if (state.libraryFilter === 'shared') return store.isShareable(pl)
+  return true
+}
+
+const playlists = computed(() => store.library.value.filter((pl) => inFilter(pl) && matchesQuery(findQuery.value, [pl.name])))
 
 function subtitle(pl: Playlist) {
-  const count = `${pl.songIds.length} song${pl.songIds.length === 1 ? '' : 's'}`
+  const count = plural(pl.songIds.length, 'song')
   if (pl.isDefault) return `Playlist · ${count}`
   if (pl.ownerIdentifier !== state.identifier) return `By ${pl.ownerName} · ${count}`
   if (pl.collaborators.length) return `Shared · ${count}`

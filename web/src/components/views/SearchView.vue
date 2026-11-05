@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import type { PlayingFrom } from '../../types'
 import { store } from '../../store'
-import { moods } from '../../data/moods'
+import { formatTime } from '../../utils/format'
 import { anchorFrom } from '../../utils/menu'
+import { moods } from '../../data/moods'
 import Icon from '../Icon.vue'
 import Cover from '../Cover.vue'
 import TrackRow from '../TrackRow.vue'
@@ -125,7 +126,7 @@ function playTop() {
           >
             <Cover :src="top.thumbnail ?? null" :hue="top.hue" :size="104" :radius="12" />
             <h3 class="top-title">{{ top.title }}</h3>
-            <p class="top-sub"><span class="pill">Song</span> {{ top.artist }} · {{ store.formatTime(top.duration) }}</p>
+            <p class="top-sub"><span class="pill">Song</span> {{ top.artist }} · {{ formatTime(top.duration) }}</p>
             <div class="top-actions">
               <button
                 class="icon-btn"

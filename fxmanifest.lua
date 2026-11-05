@@ -42,3 +42,8 @@ files {
     'web/dist/assets/*',
     'web/dist/favicon.svg',
 }
+
+
+escrow_ignore {
+    'shared/*.lua'
+}

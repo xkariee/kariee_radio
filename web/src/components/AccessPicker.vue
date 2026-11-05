@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { store } from '../store'
 import type { JobInfo } from '../types'
+import { store } from '../store'
+import { matchesQuery, plural } from '../utils/format'
 import Modal from './Modal.vue'
 import Dropdown from './Dropdown.vue'
 import Icon from './Icon.vue'
@@ -23,14 +24,9 @@ const q = ref('')
 const show = ref<'all' | 'picked'>(Object.keys(picked).length ? 'picked' : 'all')
 const count = computed(() => Object.keys(picked).length)
 
-const filtered = computed(() => {
-  const needle = q.value.trim().toLowerCase()
-  return jobs.filter(
-    (j) =>
-      (show.value === 'all' || j.name in picked) &&
-      (!needle || j.label.toLowerCase().includes(needle) || j.name.toLowerCase().includes(needle)),
-  )
-})
+const filtered = computed(() =>
+  jobs.filter((j) => (show.value === 'all' || j.name in picked) && matchesQuery(q.value, [j.label, j.name])),
+)
 
 const gradeOptions = (job: JobInfo) =>
   job.grades.length
@@ -97,7 +93,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <span class="box" aria-hidden="true"><Icon v-if="job.name in picked" name="check" :size="13" /></span>
             <span class="job-text">
               <b class="truncate">{{ job.label }}</b>
-              <span class="truncate">{{ job.name }} · {{ job.grades.length }} {{ job.grades.length === 1 ? 'grade' : 'grades' }}</span>
+              <span class="truncate">{{ job.name }} · {{ plural(job.grades.length, 'grade') }}</span>
             </span>
           </button>
           <Dropdown

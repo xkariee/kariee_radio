@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import type { Playlist, PlayingFrom, Song } from '../../types'
 import { store } from '../../store'
-import { moods } from '../../data/moods'
+import { plural } from '../../utils/format'
 import { anchorFrom } from '../../utils/menu'
+import { moods } from '../../data/moods'
 import Icon from '../Icon.vue'
 import Cover from '../Cover.vue'
 
@@ -17,23 +18,17 @@ const greeting = computed(() => {
   return 'Good evening'
 })
 
-const blurb = computed(() => {
-  switch (state.contextKind) {
-    case 'radiocar':
-      return 'You’re on the car radio. Everyone in the vehicle shares the controls.'
-    case 'dj':
-      return 'You’re at the DJ booth. The whole room hears this, so make it count.'
-    default:
-      return 'Your personal radio. Players around you hear what you play.'
-  }
-})
+const BLURBS: Record<string, string> = {
+  radiocar: 'You’re on the car radio. Everyone in the vehicle shares the controls.',
+  dj: 'You’re at the DJ booth. The whole room hears this, so make it count.',
+}
+
+const blurb = computed(() => BLURBS[state.contextKind ?? ''] ?? 'Your personal radio. Players around you hear what you play.')
 
 const recent = computed(() => store.recentlyPlayed.value.slice(0, 6))
 const recentFrom: PlayingFrom = { label: 'Recently played', nav: { view: 'recent', playlistId: null } }
 
-const playlists = computed(() =>
-  [...state.playlists].sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0)),
-)
+const playlists = store.library
 
 const isCurrent = (song: Song) => store.currentSong.value?.id === song.id
 
@@ -45,16 +40,13 @@ function playTile(song: Song) {
 const playingFromPl = (pl: Playlist) => !!store.currentSong.value && state.playingFrom?.nav?.playlistId === pl.id
 
 function playPlaylist(pl: Playlist) {
-  if (playingFromPl(pl)) {
-    store.togglePlay()
-    return
-  }
-  store.playList(store.playlistSongs(pl.id), { label: pl.name, nav: { view: 'playlist', playlistId: pl.id } })
+  if (playingFromPl(pl)) store.togglePlay()
+  else store.playList(store.playlistSongs(pl.id), { label: pl.name, nav: { view: 'playlist', playlistId: pl.id } })
 }
 
 function plMeta(pl: Playlist) {
   const n = pl.songIds.length
-  const songs = `${n} song${n === 1 ? '' : 's'}`
+  const songs = plural(n, 'song')
   if (pl.ownerIdentifier !== state.identifier) return `By ${pl.ownerName} · ${songs}`
   if (pl.collaborators.length) return `${pl.collaborators.length + 1} members · ${songs}`
   return songs

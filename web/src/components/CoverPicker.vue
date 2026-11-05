@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
 
-defineProps<{ hue: number; name?: string }>()
+defineProps<{ hue: number }>()
 const model = defineModel<string | null>({ required: true })
 
 const urlDraft = ref('')

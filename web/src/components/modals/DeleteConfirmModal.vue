@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { store } from '../../store'
+import { plural } from '../../utils/format'
 import Modal from '../Modal.vue'
 import Icon from '../Icon.vue'
 
@@ -14,8 +15,8 @@ const others = computed(() => playlist.value?.collaborators.length ?? 0)
 <template>
   <Modal v-if="playlist" title="Delete playlist?" :width="400" icon="trash-2" tone="danger" @close="store.cancelDeletePlaylist()">
     <p class="message">
-      <b>“{{ playlist.name }}”</b> and its {{ playlist.songIds.length }} songs will be removed
-      <template v-if="others"> for you and {{ others }} collaborator{{ others === 1 ? '' : 's' }}</template>. This can’t be
+      <b>“{{ playlist.name }}”</b> and its {{ plural(playlist.songIds.length, 'song') }} will be removed
+      <template v-if="others"> for you and {{ plural(others, 'collaborator') }}</template>. This can’t be
       undone.
     </p>
     <template #footer>

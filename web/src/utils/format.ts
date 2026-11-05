@@ -1,5 +1,7 @@
 const pad = (n: number) => n.toString().padStart(2, '0')
 
+export const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value))
+
 export function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`
 }

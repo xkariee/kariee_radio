@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { store } from '../store'
+import { usePopover } from '../composables/usePopover'
 import Icon from './Icon.vue'
 
 const { state } = store
@@ -9,7 +10,7 @@ const btn = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const tapBtn = ref<HTMLElement | null>(null)
 
-const open = computed(() => state.popover === 'lights')
+const { open, toggle, close } = usePopover('lights', btn, menu, () => tapBtn.value)
 const tapsLeft = computed(() => Math.max(0, 4 - state.tapCount))
 
 const status = computed(() => {
@@ -18,39 +19,16 @@ const status = computed(() => {
   return 'Not set yet. Lights run at a default tempo from the start of the song'
 })
 
-function toggle() {
-  state.popover = open.value ? null : 'lights'
-}
-
-watch(open, async (o) => {
-  if (o) {
-    await nextTick()
-    tapBtn.value?.focus()
-    document.addEventListener('mousedown', onOutside)
-  } else {
-    document.removeEventListener('mousedown', onOutside)
-  }
-})
-
-function onOutside(e: MouseEvent) {
-  const t = e.target as Node
-  if (!menu.value?.contains(t) && !btn.value?.contains(t)) state.popover = null
-}
-
 function onTapKey(e: KeyboardEvent) {
   if (!e.repeat) store.tapTempo()
 }
 
 function onMenuKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    state.popover = null
-    btn.value?.focus()
-  }
+  if (e.key !== 'Escape') return
+  e.preventDefault()
+  e.stopPropagation()
+  close()
 }
-
-onUnmounted(() => document.removeEventListener('mousedown', onOutside))
 </script>
 
 <template>

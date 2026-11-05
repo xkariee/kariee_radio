@@ -62,6 +62,7 @@ import {
   isOwnerOf,
   isShareable,
   leavePlaylist,
+  library,
   playlistById,
   playlistSongs,
   removeCollaborator,
@@ -149,6 +150,7 @@ export const store = {
   nudgeTempo,
   resetTempo,
 
+  library,
   playlistById,
   playlistSongs,
   activePlaylist,
