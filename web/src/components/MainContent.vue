@@ -32,6 +32,13 @@ const banUntil = computed(() =>
         <span>{{ ban.reason || 'No reason given' }} · {{ banUntil }}</span>
       </span>
     </div>
+    <div v-else-if="state.djLocked && state.contextKind === 'dj'" class="ban-banner locked" role="status">
+      <span class="ban-icon" aria-hidden="true"><Icon name="lock" :size="17" /></span>
+      <span class="ban-text">
+        <b>Only certain jobs can play music at this booth</b>
+        <span>You can still browse, edit your playlists and change settings.</span>
+      </span>
+    </div>
 
     <Transition name="view" mode="out-in">
       <HomeView v-if="state.view === 'home'" key="home" />
@@ -87,5 +94,15 @@ const banUntil = computed(() =>
 .ban-text b {
   font-size: 1.4rem;
   color: var(--text-h);
+}
+
+.ban-banner.locked {
+  background: var(--fill-2);
+  border-color: var(--line-2);
+}
+
+.locked .ban-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 </style>

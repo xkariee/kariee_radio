@@ -2,7 +2,8 @@ DjStations = {}
 -- stationId -> { obj = entity } (prop booths) or { zone = ox_target zone id } (object/box booths)
 local spawned = {}
 
----Opens the radio NUI bound to this station.
+---Opens the radio NUI bound to this station. Everyone can open it; on a job-restricted booth the
+---server tells the NUI (getState -> djLocked) to block playback for players without the job.
 local function tryOpenDjStation(stationId)
     local station = DjStations[stationId]
     if not station then

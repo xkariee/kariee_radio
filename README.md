@@ -21,7 +21,7 @@ YouTube Data API v3 key used for in-app music search.
 
 ## DJ booth creator
 
-`/createdj` (or **Place new booth** in the admin panel) walks you through four steps, with the keys for
+`/createdj` (or **Place new booth** in the admin panel) walks you through five steps, with the keys for
 each step shown on screen:
 
 1. **Console**: spawn a prop (cycle models from `Config.DjModels`), pick an **existing object** in the world
@@ -30,8 +30,14 @@ each step shown on screen:
    (muffled) outside. Outdoors, set a **radius**, or draw a **custom area** corner by corner, with a height
    and a fade-out distance.
 3. **Disco lights**: place moving spotlights, laser fans, mirror balls and strobes, each with a colour (or
-   rainbow) and speed. They animate to `Config.DiscoLights.bpm` whenever the booth is playing.
-4. **Save**: review and save. `/editdj` (or **Edit setup** in the admin panel) reopens it later.
+   rainbow) and speed. They animate to `Config.DiscoLights.bpm` whenever the booth is playing. **M**
+   picks what marks each light: the glowing dot, nothing, or a prop from `Config.DiscoLights.fixtures`
+   (stands on the floor/truss you aim at, hangs upside down from a ceiling, scroll to rotate).
+4. **Access**: press **E** to pick which ESX jobs can use the console, each with a minimum grade. Pick
+   none and everyone can. Anyone can still open the booth's radio to browse, edit playlists and change
+   settings, but playing, skipping, queueing, volume and tempo are blocked with a notice (and rejected
+   by the server). Radio admins can always use it.
+5. **Save**: review and save. `/editdj` (or **Edit setup** in the admin panel) reopens it later.
 
 Booth setups are stored in the `settings` column of `radio_dj_stations` (added automatically).
 

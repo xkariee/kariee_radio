@@ -203,7 +203,7 @@ onUnmounted(() => {
 
 .dd-list {
   position: fixed;
-  z-index: 250;
+  z-index: 350; /* above modals (300) - also used inside them */
   margin: 0;
   padding: 0.6rem;
   list-style: none;

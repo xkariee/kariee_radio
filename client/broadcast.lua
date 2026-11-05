@@ -47,12 +47,38 @@ AddEventHandler('onResourceStop', function(resourceName)
     if resourceName == GetCurrentResourceName() then destroyBackProp() end
 end)
 
+-- GetGameTimer() when the last sync arrived, so the server's progress can be run forward locally.
+local syncedAt = 0
+
 RegisterNetEvent('kariee_radio:broadcast:sync', function(payload)
     broadcasts = payload or {}
+    syncedAt = GetGameTimer()
     SendNUIMessage({ action = 'broadcastSync', broadcasts = broadcasts })
 
     local mine = broadcasts[myRadioId]
     updateBackProp(mine ~= nil and mine.playing == true)
+end)
+
+-- ─── Personal radio pauses indoors ─────────────────────────────────────────
+-- The personal radio isn't allowed inside interiors, so one started outside pauses (for everyone)
+-- as soon as you walk in and resumes when you step back out - the server keeps track of which
+-- pause was ours, so a radio you paused yourself stays paused.
+
+local reportedIndoors = nil
+
+CreateThread(function()
+    while true do
+        Wait(500)
+        local mine = broadcasts[myRadioId]
+        if mine then
+            local indoors = GetInteriorFromEntity(PlayerPedId()) ~= 0
+            -- Re-sent while it's still playing in here, until the paused state syncs back.
+            if indoors ~= reportedIndoors or (indoors and mine.playing) then
+                reportedIndoors = indoors
+                TriggerServerEvent('kariee_radio:broadcast:indoors', indoors)
+            end
+        end
+    end
 end)
 
 ---Whether a broadcast is currently playing / whether this client is inside its hearing area
@@ -60,6 +86,53 @@ end)
 function IsBroadcastPlaying(id)
     local b = broadcasts[id]
     return b ~= nil and b.playing == true
+end
+
+-- ─── Song clock for the disco lights ───────────────────────────────────────
+-- The NUI reports where each DJ booth's YouTube player actually is twice a second; between
+-- reports it's run forward on the game timer. That's what this client *hears*, so the lights stay
+-- on the beat through seeks and buffering. The server's clock is the fallback.
+
+local audioClock = {}
+
+RegisterNUICallback('audioClock', function(data, cb)
+    local now = GetGameTimer()
+    for id, c in pairs(data.clocks or {}) do
+        local t = tonumber(c.time)
+        if t then
+            local prev = audioClock[id]
+            if prev and prev.videoId == c.videoId and prev.playing and c.playing then
+                -- Small differences are report jitter: ease towards them so the beat doesn't twitch.
+                local predicted = prev.time + (now - prev.at) / 1000.0
+                if math.abs(t - predicted) < 0.25 then t = predicted + (t - predicted) * 0.3 end
+            end
+            audioClock[id] = { time = t, at = now, playing = c.playing == true, videoId = c.videoId }
+        end
+    end
+    cb({})
+end)
+
+---Seconds into the current song of a broadcast, as heard here.
+---@return number|nil
+function BroadcastSongTime(id)
+    local b = broadcasts[id]
+    if not b or not b.song then return nil end
+    local now = GetGameTimer()
+
+    local c = audioClock[id]
+    if c and c.videoId == b.song.videoId and now - c.at < 2500 then
+        return c.playing and c.time + (now - c.at) / 1000.0 or c.time
+    end
+
+    local p = tonumber(b.progress) or 0.0
+    if b.playing then p = p + (now - syncedAt) / 1000.0 end
+    return p
+end
+
+---The beat grid set by tapping along in the NUI: { bpm, offset } or nil (use the default).
+function BroadcastTempo(id)
+    local b = broadcasts[id]
+    return b and b.tempo or nil
 end
 
 function IsBroadcastNear(id)

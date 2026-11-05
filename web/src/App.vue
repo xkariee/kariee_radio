@@ -17,6 +17,7 @@ import BanModal from './components/modals/BanModal.vue'
 import ConfirmModal from './components/modals/ConfirmModal.vue'
 import NearbyWidget from './components/NearbyWidget.vue'
 import CreatorHud from './components/CreatorHud.vue'
+import AccessPicker from './components/AccessPicker.vue'
 import Icon from './components/Icon.vue'
 import { store } from './store'
 import { ACCENT_HUES, DEFAULT_HUE, applyAccent, applyFlags, applyScale, settings } from './settings'
@@ -125,6 +126,10 @@ function onKey(e: KeyboardEvent) {
     case 'L':
       if (song) store.toggleFavorite(song.id)
       break
+    case 't':
+    case 'T':
+      if (!e.repeat) store.tapTempo()
+      break
     case 'q':
     case 'Q':
       store.setView(state.view === 'queue' ? 'home' : 'queue')
@@ -198,6 +203,7 @@ function preventMenu(e: MouseEvent) {
 
     <NearbyWidget />
     <CreatorHud />
+    <AccessPicker v-if="state.creatorAccess" />
     <ContextMenu />
     <CreatePlaylistModal v-if="state.createPlaylistOpen" />
     <EditPlaylistModal v-if="state.editPlaylistId != null" />

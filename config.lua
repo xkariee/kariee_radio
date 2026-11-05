@@ -56,6 +56,7 @@ Config.Placement = {
     heightStep = 0.02,   -- metres per tick while holding up/down
     interactRange = 5.0, -- how close you need to be to a station for /dj and /removedj
     targetDistance = 2.0, -- ox_target interaction range on the spawned DJ mixer prop
+    controlRange = 25.0, -- how close to a booth you must be for the server to accept changes to its music
 }
 
 -- Console props the creator (/createdj) cycles through with [M]. Models that don't exist in your
@@ -84,6 +85,21 @@ Config.DiscoLights = {
     maxPerBooth = 10,
     drawDistance = 80.0, -- also drawn within this many metres of the booth, even outside its sound area
     bpm = 124,           -- beat the strobes/pulses follow
+    -- Props a light can be mounted on instead of the glowing dot ([M] in the creator's Lights
+    -- step). Aim at the floor or a truss and it stands there, aim at a ceiling and it hangs upside
+    -- down. Models missing from your game build are skipped, so add your own (e.g. from an MLO).
+    fixtures = {
+        'prop_worklight_03b',
+        'prop_worklight_04b',
+        'prop_studio_light_02',
+        'prop_studio_light_03',
+        'prop_kino_light_03',
+        "tr_prop_wall_light_02a",
+        "vb_39_lightnw_03",
+        "tr_prop_tr_serv_tu_light3",
+        "hw1_04_lightfittings",
+    },
+    fixtureDistance = 120.0, -- fixture props are spawned for players within this many metres of the booth
     colors = {
         { name = 'Rainbow', rgb = false },
         { name = 'Red', rgb = { 255, 40, 70 } },
@@ -135,6 +151,7 @@ Config.Messages = {
     no_station_nearby = 'No DJ station owned by you is nearby.',
     radio_forbidden_interior = 'Radio in this interior is forbidden.',
     dj_interior_occupied = 'There is already a DJ console in this interior.',
+    dj_no_access = "Your job can't use this DJ console.",
     station_removed = 'DJ station removed.',
     not_ready = 'Still connecting, try again in a moment.',
     admin_stopped = 'An admin stopped your music.',

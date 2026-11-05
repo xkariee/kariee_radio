@@ -8,8 +8,10 @@ import type {
   BanDraft,
   BroadcastKind,
   ConfirmState,
+  CreatorAccess,
   CreatorHud,
   Coords,
+  DjAccessRule,
   Invite,
   LiveBroadcast,
   MenuAnchor,
@@ -23,6 +25,7 @@ import type {
   RadioBan,
   RepeatMode,
   Song,
+  Tempo,
   Toast,
   ViewKind,
 } from './types'
@@ -42,7 +45,7 @@ import { asArray } from './utils/format'
 import { settings } from './settings'
 
 type PlaylistId = string | number
-type Popover = 'sleep' | null
+type Popover = 'sleep' | 'lights' | null
 
 interface State {
   songs: Song[]
@@ -81,6 +84,9 @@ interface State {
   identifier: string
   myName: string
   contextKind: BroadcastKind | null
+  // Opened with no radio bound because it isn't allowed here (e.g. inside an interior): the
+  // notice shown when the player tries to play anything.
+  contextBlocked: string | null
   sleepEndsAt: number | null
   sleepEndOfTrack: boolean
   now: number
@@ -92,12 +98,19 @@ interface State {
   serverId: number | null
   isAdmin: boolean
   ban: RadioBan | null
+  // a job-restricted DJ booth this player can open but not run (server: getState -> djLocked)
+  djLocked: boolean
   // every broadcast on the server, and whether we're in range of each
   live: Record<string, LiveBroadcast>
   proximity: Record<string, Proximity>
   widgetServerEnabled: boolean
   widgetCommand: string
   widgetEditing: boolean
+  // ─── disco light sync (DJ booths) ───
+  lightsEnabled: boolean
+  tempo: Tempo | null
+  // taps in the current tap-tempo run, for the popover's feedback
+  tapCount: number
   admin: {
     data: AdminData | null
     loading: boolean
@@ -109,6 +122,8 @@ interface State {
   banDraft: BanDraft | null
   // DJ booth creator HUD (client/creator.lua), null when not creating
   creator: CreatorHud | null
+  // the creator's job picker (Access step), null when closed
+  creatorAccess: CreatorAccess | null
 }
 
 const playerPrefs = loadJson('player', { shuffle: false, repeat: 'off' as RepeatMode })
@@ -150,6 +165,7 @@ const state = reactive<State>({
   identifier: currentUser.identifier,
   myName: currentUser.name,
   contextKind: isNuiEnv ? null : 'radio',
+  contextBlocked: null,
   sleepEndsAt: null,
   sleepEndOfTrack: false,
   now: Date.now(),
@@ -159,15 +175,20 @@ const state = reactive<State>({
   serverId: isNuiEnv ? null : 7,
   isAdmin: !isNuiEnv,
   ban: null,
+  djLocked: false,
   live: isNuiEnv ? {} : { [devLiveBroadcast.id]: { ...devLiveBroadcast, syncedAt: Date.now() } },
   proximity: isNuiEnv ? {} : { [devLiveBroadcast.id]: { near: true, volume: 0.8 } },
   widgetServerEnabled: true,
   widgetCommand: 'radiohud',
   widgetEditing: false,
+  lightsEnabled: !isNuiEnv,
+  tempo: null,
+  tapCount: 0,
   admin: { data: null, loading: false, error: null, tab: 'live', fetchedAt: 0 },
   confirm: null,
   banDraft: null,
   creator: null,
+  creatorAccess: null,
 })
 
 watch(
@@ -179,6 +200,28 @@ let myBroadcastId: string | null = isNuiEnv ? null : 'radio:dev'
 // DJ stations and car radios are collaborative (shared, server-side queue); personal radio keeps
 // its queue purely local. state.contextKind tracks which kind the open NUI session is bound to.
 const isShared = () => state.contextKind === 'dj' || state.contextKind === 'radiocar'
+
+// The personal radio's local queue, parked while the panel is bound to something else (a booth,
+// a car, or nothing) so coming back to your own radio picks it up again.
+let parkedRadioQueue: { queue: QueueEntry[]; cursor: number; from: PlayingFrom | null } | null = null
+
+// Re-binds the player to another broadcast: nothing from the previous one (its song, queue,
+// progress, beat grid) may carry over - a DJ booth only ever shows at that booth.
+function bindBroadcast(id: string | null, kind: BroadcastKind | null) {
+  if (id === myBroadcastId) return
+  if (state.contextKind === 'radio') {
+    parkedRadioQueue = { queue: state.queue, cursor: state.queueCursor, from: state.playingFrom }
+  }
+  myBroadcastId = id
+  pendingSeek = null
+  const parked = kind === 'radio' ? parkedRadioQueue : null
+  state.queue = parked ? parked.queue : []
+  state.queueCursor = parked ? parked.cursor : 0
+  state.playingFrom = parked ? parked.from : null
+  state.isPlaying = false
+  state.progress = 0
+  state.tempo = null
+}
 
 let qidSeq = 1000
 const nextQid = () => `q${qidSeq++}`
@@ -281,18 +324,32 @@ const activeBan = computed<RadioBan | null>(() => {
   return null
 })
 
+// Job-restricted booth: browsing, playlists and settings work, but anything that changes what the
+// booth plays is stopped here with a notice (the server rejects it regardless). Throttled so a
+// dragged slider doesn't stack up toasts.
+let lockedToastAt = 0
+function controlLocked(): boolean {
+  if (!state.djLocked || state.contextKind !== 'dj') return false
+  if (Date.now() - lockedToastAt > 1500) {
+    lockedToastAt = Date.now()
+    toast('Only certain jobs can play music at this booth', 'lock', 'danger')
+  }
+  return true
+}
+
 // Stops an action before it reaches the server with a reason the player can act on (the server
 // rejects it regardless).
 function playBlocked(): boolean {
   if (isNuiEnv && state.contextKind == null) {
-    toast('Open your radio (or a DJ booth) to play music', 'radio')
+    if (state.contextBlocked) toast(state.contextBlocked, 'radio', 'danger')
+    else toast('Open your radio (or a DJ booth) to play music', 'radio')
     return true
   }
   if (activeBan.value) {
     toast(activeBan.value.scope === 'all' ? 'You’re banned from using the radio' : 'You’re banned from DJ booths', 'ban', 'danger')
     return true
   }
-  return false
+  return controlLocked()
 }
 
 function liveProgress(b: LiveBroadcast) {
@@ -481,6 +538,7 @@ function stopPlayback() {
 }
 
 function next() {
+  if (controlLocked()) return
   if (isShared()) {
     fetchNui('next', {})
     return
@@ -489,6 +547,7 @@ function next() {
 }
 
 function prev() {
+  if (controlLocked()) return
   if (state.progress > 4 && currentSong.value) {
     seek(0)
     return
@@ -501,11 +560,22 @@ function prev() {
   }
 }
 
+// How far the player may be from the server's clock before it gets pulled back in line.
+const DRIFT_TOLERANCE = 2
+
+// A seek the server hasn't confirmed yet. Any broadcast changing anywhere sends a sync, and one
+// that was already on its way still carries the old position - without this it snapped the bar
+// (and the audio) straight back to where it was.
+let pendingSeek: { to: number; at: number; videoId?: string } | null = null
+
 function seek(sec: number) {
   const song = currentSong.value
-  if (!song) return
+  if (!song || controlLocked()) return
   const clamped = Math.min(Math.max(0, sec), song.duration || sec)
   state.progress = clamped
+  pendingSeek = { to: clamped, at: Date.now(), videoId: song.videoId }
+  // Jump right away instead of waiting out the server round trip.
+  if (myBroadcastId) audioEngine.seek(myBroadcastId, clamped)
   fetchNui('seek', { seconds: clamped })
 }
 
@@ -514,12 +584,14 @@ function seekBy(delta: number) {
 }
 
 function setVolume(v: number) {
+  if (controlLocked()) return
   state.volume = Math.round(Math.min(100, Math.max(0, v)))
   if (state.volume > 0) state.muted = false
   fetchNui('setVolume', { volume: effectiveVolume() })
 }
 
 function toggleMute() {
+  if (controlLocked()) return
   state.muted = !state.muted
   fetchNui('setVolume', { volume: effectiveVolume() })
 }
@@ -573,7 +645,7 @@ function playNext(song: Song) {
 
 function removeFromQueue(qid: string) {
   const idx = state.queue.findIndex((e) => e.qid === qid)
-  if (idx === -1) return
+  if (idx === -1 || controlLocked()) return
 
   if (isShared()) {
     if (idx === 0) return // index 0 is the currently-playing song, not a removable queue entry
@@ -587,6 +659,7 @@ function removeFromQueue(qid: string) {
 
 // Shared radios: replace the whole server-side "up next" list in one go (reorder / shuffle / clear).
 function setUpNext(entries: QueueEntry[]) {
+  if (controlLocked()) return
   if (isShared()) {
     const songs = entries.map((e) => songById(e.songId)).filter((s): s is Song => !!s)
     state.queue = [...state.queue.slice(0, 1), ...entries]
@@ -605,13 +678,13 @@ function reorderUpNext(from: number, to: number) {
 }
 
 function shuffleUpNext() {
-  if (upNext.value.length < 2) return
+  if (upNext.value.length < 2 || controlLocked()) return
   setUpNext(shuffled(upNext.value))
   toast('Shuffled up next', 'shuffle')
 }
 
 function clearUpNext() {
-  if (!upNext.value.length) return
+  if (!upNext.value.length || controlLocked()) return
   setUpNext([])
   toast('Cleared up next', 'trash-2')
 }
@@ -1040,6 +1113,13 @@ async function adminUnban(ban: AdminBan) {
   fetchAdmin(true)
 }
 
+// Creator job picker: `access` saves the selection, null cancels. Either way the client takes the
+// focus back and the creator carries on.
+function closeAccessPicker(access: DjAccessRule[] | null) {
+  state.creatorAccess = null
+  fetchNui('creatorAccess', access ? { access } : {})
+}
+
 // Escape peels off the topmost layer first; only with nothing left open does it close the radio.
 function dismissTopLayer(): boolean {
   if (state.widgetEditing) finishWidgetEditing()
@@ -1171,8 +1251,9 @@ async function hydrate() {
   }))
   state.isAdmin = !!data.isAdmin
   state.ban = data.ban ?? null
+  state.djLocked = !!data.djLocked
 
-  // Opened with no radio bound (admin panel only): leave whatever is playing untouched.
+  // Opened with no radio bound (interior): there's no broadcast to show.
   if (state.contextKind == null) return
 
   if (data.broadcast) {
@@ -1193,11 +1274,13 @@ async function hydrate() {
     state.progress = data.broadcast.progress || 0
     state.isPlaying = !!data.broadcast.playing
     state.volume = data.broadcast.volume ?? state.volume
+    state.tempo = data.broadcast.tempo ?? null
   } else {
     state.queue = []
     state.queueCursor = 0
     state.progress = 0
     state.isPlaying = false
+    state.tempo = null
   }
 }
 
@@ -1232,26 +1315,44 @@ function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
       audioEngine.destroy(id)
       delete knownVideo[id]
       delete knownPlaying[id]
-      if (id === myBroadcastId) state.isPlaying = false
+      if (id === myBroadcastId) {
+        state.isPlaying = false
+        state.tempo = null
+      }
     }
   }
 
   for (const [id, b] of Object.entries(incoming)) {
     const videoId = b.song?.videoId
     if (!videoId) continue
+    const progress = b.progress || 0
+
+    // Our own seek already moved the audio locally; a sync still showing the old spot is stale.
+    const seekInFlight =
+      id === myBroadcastId && pendingSeek != null && pendingSeek.videoId === videoId && Date.now() - pendingSeek.at < 3000
+    const racedSeek = seekInFlight && Math.abs(progress - pendingSeek!.to) > DRIFT_TOLERANCE
+    if (id === myBroadcastId && !racedSeek) pendingSeek = null
 
     if (knownVideo[id] !== videoId) {
-      audioEngine.play(id, videoId, b.progress || 0)
+      audioEngine.play(id, videoId, progress)
       knownVideo[id] = videoId
-    } else if (knownPlaying[id] !== b.playing) {
-      if (b.playing) audioEngine.resume(id)
-      else audioEngine.pause(id)
+    } else {
+      if (knownPlaying[id] !== b.playing) {
+        if (b.playing) audioEngine.resume(id)
+        else audioEngine.pause(id)
+      }
+      // Someone seeked, a DJ booth looped the same song, or this player fell behind while
+      // buffering: the server's clock is the truth, so jump there when we're noticeably off.
+      const pos = seekInFlight ? null : audioEngine.getPosition(id)
+      if (pos && Math.abs(pos.time - progress) > DRIFT_TOLERANCE) audioEngine.seek(id, progress)
     }
     knownPlaying[id] = b.playing
 
     if (id === myBroadcastId) {
       state.isPlaying = b.playing
-      state.progress = b.progress || 0
+      if (!racedSeek) state.progress = progress
+      // Our own taps win until they've been sent, so the readout doesn't flicker back.
+      if (!tempoCommit) state.tempo = b.tempo ?? null
 
       if (isShared()) {
         const current = songFromBroadcast(b.song)
@@ -1268,8 +1369,110 @@ function handleBroadcastSync(data: { broadcasts?: Record<string, any> }) {
   }
 }
 
+// ─── Disco light sync (DJ booths) ──────────────────────────────────────────
+// YouTube plays in a cross-origin iframe, so the audio itself can't be analysed. Instead the
+// lights (client/lights.lua) run off the song position each player actually hears, on a beat grid
+// the DJ sets by tapping along - remembered per song by the server.
+
+// The beat grid lives in song time, so it holds through seeks, pauses and buffering.
+function reportAudioClocks() {
+  if (!state.lightsEnabled) return
+  const clocks: Record<string, { time: number; playing: boolean; videoId: string }> = {}
+  let any = false
+  for (const [id, videoId] of Object.entries(knownVideo)) {
+    if (!id.startsWith('dj:')) continue
+    const pos = audioEngine.getPosition(id)
+    if (!pos) continue
+    clocks[id] = { time: pos.time, playing: pos.playing, videoId }
+    any = true
+  }
+  if (any) fetchNui('audioClock', { clocks }).catch(() => {})
+}
+
+const lightSync = computed(() => state.lightsEnabled && (state.contextKind === 'dj' || !isNuiEnv) && !!currentSong.value)
+
+const TAP_RESET_MS = 2000
+const MIN_TAPS = 4
+let taps: { wall: number; song: number }[] = []
+let tapReset: ReturnType<typeof setTimeout> | null = null
+let tempoCommit: ReturnType<typeof setTimeout> | null = null
+
+// Where in the song this player is right now - what a tap lines up with.
+function songTimeNow(): number {
+  const pos = myBroadcastId ? audioEngine.getPosition(myBroadcastId) : null
+  return pos ? pos.time : state.progress
+}
+
+// Shown immediately, sent once the taps settle (each send is a sync to every player).
+function setTempo(t: Tempo | null) {
+  if (controlLocked()) return
+  state.tempo = t
+  if (tempoCommit) clearTimeout(tempoCommit)
+  tempoCommit = setTimeout(() => {
+    tempoCommit = null
+    fetchNui('setTempo', t ?? {})
+  }, 700)
+}
+
+function tapTempo() {
+  if (!lightSync.value || !state.isPlaying || controlLocked()) return
+  const wall = performance.now()
+  if (taps.length && wall - taps[taps.length - 1].wall > TAP_RESET_MS) taps = []
+  taps.push({ wall, song: songTimeNow() })
+  state.tapCount = taps.length
+  if (tapReset) clearTimeout(tapReset)
+  tapReset = setTimeout(() => (state.tapCount = 0), TAP_RESET_MS)
+
+  // One tap with a tempo already set just moves the downbeat onto it.
+  if (taps.length === 1) {
+    if (state.tempo) setTempo({ bpm: state.tempo.bpm, offset: taps[0].song })
+    return
+  }
+  if (taps.length < MIN_TAPS) return
+
+  // Beat length from the tap timestamps (least squares, so one sloppy tap barely matters),
+  // rounded to a whole BPM - produced tracks almost always are, and it stops slow drift.
+  const n = taps.length
+  const meanI = (n - 1) / 2
+  const meanW = taps.reduce((a, t) => a + t.wall, 0) / n
+  let num = 0
+  let den = 0
+  taps.forEach((t, i) => {
+    num += (i - meanI) * (t.wall - meanW)
+    den += (i - meanI) ** 2
+  })
+  let bpm = 60000 / (num / den)
+  if (!Number.isFinite(bpm) || bpm <= 0) return
+  while (bpm > 200) bpm /= 2
+  while (bpm < 60) bpm *= 2
+  bpm = Math.round(bpm)
+
+  // The first tap is the downbeat; averaging every tap's song position steadies it.
+  const beat = 60 / bpm
+  const offset = taps.reduce((a, t, i) => a + (t.song - i * beat), 0) / n
+  setTempo({ bpm, offset })
+}
+
+// ±1 BPM without moving the beat that's playing right now.
+function nudgeTempo(delta: number) {
+  const t = state.tempo
+  if (!t) return
+  const bpm = Math.min(200, Math.max(60, t.bpm + delta))
+  const now = songTimeNow()
+  const beats = ((now - t.offset) * t.bpm) / 60
+  setTempo({ bpm, offset: now - (beats * 60) / bpm })
+}
+
+function resetTempo() {
+  taps = []
+  state.tapCount = 0
+  setTempo(null)
+}
+
 function bindNui() {
   if (!isNuiEnv) return
+
+  setInterval(reportAudioClocks, 500)
 
   // The widget lives outside the panel, so it needs these before the radio is ever opened.
   fetchNui<any>('getConfig', {})
@@ -1278,15 +1481,18 @@ function bindNui() {
       state.widgetServerEnabled = c.widget !== false
       if (c.widgetCommand) state.widgetCommand = c.widgetCommand
       if (c.serverId != null) state.serverId = c.serverId
+      state.lightsEnabled = !!c.lights
     })
     .catch(() => {})
 
   onNuiMessage('open', (data) => {
     state.visible = true
-    // No context = admin panel opened somewhere the radio isn't allowed; keep the old binding so
-    // a personal radio that's still playing stays in sync.
-    if (data.context) myBroadcastId = data.context.id
+    // Bound to exactly what was opened. No context = opened somewhere the radio isn't allowed
+    // (interior): nothing is shown or controllable, least of all a booth used earlier.
+    bindBroadcast(data.context?.id ?? null, data.context?.kind ?? null)
     state.contextKind = data.context?.kind ?? null
+    state.contextBlocked = data.context ? null : (data.blocked ?? null)
+    state.djLocked = false
     // Shared broadcasts (dj/radiocar) advance server-side only - every viewer's own "song ended"
     // firing a local advance would race and skip multiple tracks at once.
     if (myBroadcastId) {
@@ -1320,6 +1526,16 @@ function bindNui() {
     const d = data.data
     state.creator = d
       ? { ...d, steps: asArray<string>(d.steps), options: asArray(d.options), info: asArray(d.info), keys: asArray<any>(d.keys).map((k) => ({ ...k, keys: asArray<string>(k.keys) })) }
+      : null
+  })
+
+  onNuiMessage('creatorAccess', (data) => {
+    const d = data.data
+    state.creatorAccess = d
+      ? {
+          jobs: asArray<any>(d.jobs).map((j) => ({ name: j.name, label: j.label ?? j.name, grades: asArray(j.grades) })),
+          access: asArray<DjAccessRule>(d.access),
+        }
       : null
   })
 
@@ -1357,6 +1573,10 @@ export const store = {
   prev,
   seek,
   seekBy,
+  lightSync,
+  tapTempo,
+  nudgeTempo,
+  resetTempo,
   setVolume,
   toggleMute,
   toggleShuffle,
@@ -1428,5 +1648,6 @@ export const store = {
   adminEditStation,
   adminBan,
   adminUnban,
+  closeAccessPicker,
   close: () => fetchNui('close', {}),
 }

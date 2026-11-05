@@ -19,7 +19,8 @@ RegisterCommand(Config.AdminCommand, function()
         return
     end
     -- Bound to your radio when you could open one here; otherwise just the admin panel.
-    OpenRadio(ResolveRadioContext(), 'admin')
+    local context, reason = ResolveRadioContext()
+    OpenRadio(context, 'admin', reason and Config.Messages[reason])
 end, false)
 
 local function locationOf(coords)

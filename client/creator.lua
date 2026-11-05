@@ -1,8 +1,9 @@
 -- DJ booth creator: /createdj (new booth), /editdj or the admin panel (existing booth).
--- Four steps - Console, Sound, Lights, Save - previewed live in the world, with the current
--- step's keys shown in the NUI (web/src/components/CreatorHud.vue).
+-- Five steps - Console, Sound, Lights, Access, Save - previewed live in the world, with the current
+-- step's keys shown in the NUI (web/src/components/CreatorHud.vue). The Access step's job picker
+-- is the one part that takes the mouse (web/src/components/AccessPicker.vue).
 
-local STEPS = { 'Console', 'Sound', 'Lights', 'Save' }
+local STEPS = { 'Console', 'Sound', 'Lights', 'Access', 'Save' }
 
 local CTRL = {
     enter = 201,   -- Enter
@@ -32,14 +33,18 @@ local LIGHT_TYPES = { 'spot', 'laser', 'ball', 'strobe' }
 local LIGHT_LABEL = { spot = 'Moving spotlight', laser = 'Laser fan', ball = 'Mirror ball', strobe = 'Strobe / wash' }
 
 local session = nil
+-- True while the job picker has NUI focus (and briefly after), so the key that closed it
+-- doesn't also advance or cancel the creator.
+local muted = false
 
 -- ─── input / geometry helpers ──────────────────────────────────────────────
 
-local function pressed(c) return IsDisabledControlJustPressed(0, c) end
-local function held(c) return IsDisabledControlPressed(0, c) end
+local function pressed(c) return not muted and IsDisabledControlJustPressed(0, c) end
+local function held(c) return not muted and IsDisabledControlPressed(0, c) end
 local function fine() return IsControlPressed(0, CTRL.shift) end
 
 local function scrolled()
+    if muted then return 0 end
     for _, c in ipairs(SCROLL_UP) do if IsDisabledControlJustPressed(0, c) then return 1 end end
     for _, c in ipairs(SCROLL_DOWN) do if IsDisabledControlJustPressed(0, c) then return -1 end end
     return 0
@@ -60,14 +65,14 @@ local function rotationToDirection(rotation)
     return vector3(-math.sin(z) * math.abs(math.cos(x)), math.cos(z) * math.abs(math.cos(x)), math.sin(x))
 end
 
----@return boolean hit, vector3 coords, number entity, vector3 dir
+---@return boolean hit, vector3 coords, number entity, vector3 dir, vector3 normal
 local function aimRay(distance, flags)
     local cam = GetGameplayCamCoord()
     local dir = rotationToDirection(GetGameplayCamRot(2))
     local dest = cam + dir * distance
     local handle = StartExpensiveSynchronousShapeTestLosProbe(cam.x, cam.y, cam.z, dest.x, dest.y, dest.z, flags, PlayerPedId(), 7)
-    local _, hit, coords, _, entity = GetShapeTestResult(handle)
-    return hit == 1, hit == 1 and coords or dest, entity, dir
+    local _, hit, coords, normal, entity = GetShapeTestResult(handle)
+    return hit == 1, hit == 1 and coords or dest, entity, dir, normal
 end
 
 local function line(a, b, r, g, bl, al)
@@ -433,11 +438,65 @@ end
 
 -- ─── step 3: lights ────────────────────────────────────────────────────────
 
+-- Fixture props: a ghost for the light you're aiming, and a copy of every placed light's prop
+-- (respawned when the list changes - s.lightsRev - and shown in every step).
+
+local function deleteLightGhost(s)
+    if s.lightGhost and DoesEntityExist(s.lightGhost) then DeleteObject(s.lightGhost) end
+    s.lightGhost, s.lightGhostModel = nil, nil
+end
+
+local function deletePreviews(s)
+    for _, obj in ipairs(s.previews) do
+        if DoesEntityExist(obj) then DeleteObject(obj) end
+    end
+    s.previews = {}
+end
+
+local function syncPreviews(s)
+    if s.previewRev == s.lightsRev then return end
+    deletePreviews(s)
+    for _, l in ipairs(s.lights) do
+        if l.fixture == 'prop' and l.prop then s.previews[#s.previews + 1] = SpawnDjFixture(l.prop, true) end
+    end
+    s.previewRev = s.lightsRev
+end
+
+local function yawTowards(from, to)
+    return math.deg(math.atan(-(to.x - from.x), to.y - from.y))
+end
+
+---Moves the fixture ghost to where you aim: standing on a floor / truss, hanging from a ceiling,
+---or stood out from a wall. Faces the console, plus your scroll rotation.
+---@return table|nil { lamp = where the light comes out, prop = the light's `prop` }
+local function aimFixture(s, fixture, hit, aim, normal, console)
+    if not (s.lightGhost and s.lightGhostModel == fixture.hash and DoesEntityExist(s.lightGhost)) then
+        deleteLightGhost(s)
+        if not LoadModel(fixture.hash) then return nil end
+        s.lightGhost = CreateObject(fixture.hash, aim.x, aim.y, aim.z, false, false, false)
+        s.lightGhostModel = fixture.hash
+        SetEntityAlpha(s.lightGhost, 170, false)
+        SetEntityCollision(s.lightGhost, false, false)
+        FreezeEntityPosition(s.lightGhost, true)
+        SetModelAsNoLongerNeeded(fixture.hash)
+    end
+
+    local flip = hit and normal.z < -0.5
+    local base = aim
+    if hit and math.abs(normal.z) <= 0.5 then
+        local minV, maxV = GetModelDimensions(fixture.hash)
+        base = aim + normal * ((maxV.y - minV.y) / 2 + 0.05)
+    end
+    local heading = (yawTowards(base, console) + s.fixtureSpin) % 360
+    local lamp = PlaceDjFixture(s.lightGhost, base, heading, flip)
+    return { lamp = lamp, prop = { model = fixture.name, x = base.x, y = base.y, z = base.z, h = heading, flip = flip } }
+end
+
 local function stepLights(s, hud)
     local console = s.console.pos
     showConsole(s, s.console)
     hud.title, hud.subtitle = 'Disco lights', 'Optional. They come on whenever the booth is playing.'
-    hud.keys = { { keys = { 'Enter' }, label = 'Next: review' } }
+    hud.keys = { { keys = { 'Enter' }, label = 'Next: access' } }
 
     if not Config.DiscoLights.enabled then
         hud.options = {}
@@ -449,17 +508,30 @@ local function stepLights(s, hud)
     local colors = Config.DiscoLights.colors
     if pressed(CTRL.mode) then s.lightType = s.lightType % #LIGHT_TYPES + 1 end
     if pressed(CTRL.color) then s.colorIndex = s.colorIndex % #colors + 1 end
+    if pressed(CTRL.model) then s.fixtureIndex = s.fixtureIndex % #s.fixtures + 1 end
     if pressed(CTRL.right) then s.speed = clamp(s.speed + 0.25, 0.25, 3.0) end
     if pressed(CTRL.left) then s.speed = clamp(s.speed - 0.25, 0.25, 3.0) end
+    local fixture = s.fixtures[s.fixtureIndex]
 
-    local hit, aim, _, dir = aimRay(Config.Placement.farDistance, 1 + 16)
-    -- Pull the fixture slightly off the surface you aimed at (ceilings, walls, trusses).
+    local hit, aim, _, dir, normal = aimRay(Config.Placement.farDistance, 1 + 16)
+    -- Pull the light slightly off the surface you aimed at (ceilings, walls, trusses).
     local spot = hit and (aim - dir * 0.3) or aim
-    local ms = GetGameTimer()
-    local t, beat = ms / 1000.0, DjBeatPhase(ms)
+    local beats = DjPreviewBeats(GetGameTimer())
 
     -- The light you're about to place, previewed where you aim.
-    local pending = { type = LIGHT_TYPES[s.lightType], x = spot.x, y = spot.y, z = spot.z, color = colors[s.colorIndex].name, speed = s.speed }
+    local pending = { type = LIGHT_TYPES[s.lightType], x = spot.x, y = spot.y, z = spot.z, color = colors[s.colorIndex].name, speed = s.speed, fixture = fixture.kind }
+    if fixture.kind == 'prop' then
+        s.fixtureSpin = (s.fixtureSpin + scrolled() * (fine() and 2.5 or 15.0)) % 360
+        local placed = aimFixture(s, fixture, hit, aim, normal, console)
+        if placed then
+            spot = placed.lamp
+            pending.x, pending.y, pending.z, pending.prop = spot.x, spot.y, spot.z, placed.prop
+        else
+            pending.fixture = 'glow'
+        end
+    else
+        deleteLightGhost(s)
+    end
 
     -- Nearest placed light to the aim point (what Backspace removes).
     local nearest, nearestDist
@@ -468,42 +540,140 @@ local function stepLights(s, hud)
         if d < 3.0 and (not nearestDist or d < nearestDist) then nearest, nearestDist = i, d end
     end
 
-    DrawDjLights(s.lights, console, t, beat)
-    if #s.lights < Config.DiscoLights.maxPerBooth then DrawDjLights({ pending }, console, t, beat) end
+    DrawDjLights(s.lights, console, beats)
+    if #s.lights < Config.DiscoLights.maxPerBooth then DrawDjLights({ pending }, console, beats) end
     for i, l in ipairs(s.lights) do
         local p = vector3(l.x, l.y, l.z)
         if i == nearest then dot(p, 0.45, 255, 80, 80, 160) end
         line(p, console, 255, 255, 255, 40)
     end
-    dot(spot, 0.18, 255, 255, 255)
+    if fixture.kind ~= 'prop' then dot(spot, 0.18, 255, 255, 255) end
 
     if pressed(CTRL.place) then
         if #s.lights < Config.DiscoLights.maxPerBooth then
             s.lights[#s.lights + 1] = pending
+            s.lightsRev = s.lightsRev + 1
         else
             s.flash = GetGameTimer() + 2000
         end
     end
-    if pressed(CTRL.remove) and #s.lights > 0 then table.remove(s.lights, nearest or #s.lights) end
+    if pressed(CTRL.remove) and #s.lights > 0 then
+        table.remove(s.lights, nearest or #s.lights)
+        s.lightsRev = s.lightsRev + 1
+    end
 
     hud.options = {}
     for i, lt in ipairs(LIGHT_TYPES) do hud.options[#hud.options + 1] = { label = LIGHT_LABEL[lt], active = i == s.lightType } end
     hud.info = {
         { label = 'Colour', value = colors[s.colorIndex].name, swatch = colors[s.colorIndex].rgb or 'rainbow' },
         { label = 'Speed', value = ('%.2f×'):format(s.speed) },
+        { label = 'Fixture', value = ('%s (%d/%d)'):format(fixture.label, s.fixtureIndex, #s.fixtures) },
         { label = 'Lights placed', value = ('%d / %d'):format(#s.lights, Config.DiscoLights.maxPerBooth) },
     }
+    if fixture.kind == 'prop' then
+        table.insert(hud.info, 4, { label = 'Mounted', value = pending.prop and pending.prop.flip and 'Hanging from the ceiling' or 'Standing' })
+    end
     table.insert(hud.keys, 1, { keys = { 'E' }, label = 'Place light where you aim' })
     table.insert(hud.keys, 2, { keys = { 'Backspace' }, label = nearest and 'Remove highlighted light' or 'Remove last light' })
     table.insert(hud.keys, { keys = { 'G' }, label = 'Light type' })
     table.insert(hud.keys, { keys = { 'C' }, label = 'Colour' })
+    table.insert(hud.keys, { keys = { 'M' }, label = 'Fixture: dot, nothing or a prop' })
+    if fixture.kind == 'prop' then table.insert(hud.keys, { keys = { 'Scroll' }, label = 'Rotate fixture' }) end
     table.insert(hud.keys, { keys = { '←', '→' }, label = 'Speed' })
     if s.flash and GetGameTimer() < s.flash then hud.warning = ('That’s the maximum of %d lights.'):format(Config.DiscoLights.maxPerBooth) end
 
     if pressed(CTRL.enter) then return 4 end
 end
 
--- ─── step 4: review & save ─────────────────────────────────────────────────
+-- ─── step 4: access ────────────────────────────────────────────────────────
+
+local function jobLabel(s, name)
+    local job = s.jobs and s.jobs.byName[name]
+    return job and job.label or name
+end
+
+---"Any grade", "Sergeant and up"... for a rule's minimum grade.
+local function gradeLabel(s, rule)
+    local job = s.jobs and s.jobs.byName[rule.job]
+    local grades = job and job.grades or {}
+    if rule.grade <= (grades[1] and grades[1].grade or 0) then return 'Any grade' end
+    for _, g in ipairs(grades) do
+        if g.grade == rule.grade then return ('%s and up'):format(g.label) end
+    end
+    return ('Grade %d and up'):format(rule.grade)
+end
+
+local function accessSummary(s)
+    if #s.access == 0 then return 'Everyone' end
+    local names = {}
+    for i, rule in ipairs(s.access) do
+        if i > 3 then
+            names[#names + 1] = ('+%d more'):format(#s.access - 3)
+            break
+        end
+        names[i] = jobLabel(s, rule.job)
+    end
+    return table.concat(names, ', ')
+end
+
+local function openAccessPicker(s)
+    s.picking = true
+    SendNUIMessage({ action = 'creatorAccess', data = { jobs = s.jobs.list, access = s.access } })
+    SetNuiFocus(true, true)
+end
+
+local function stepAccess(s, hud)
+    showConsole(s, s.console)
+    DrawDjLights(s.lights, s.console.pos, DjPreviewBeats(GetGameTimer()))
+
+    hud.title, hud.subtitle = 'Who can use it', 'Only the jobs you pick can play music here. Pick none and everyone can.'
+    hud.options = { { label = 'Everyone', active = #s.access == 0 }, { label = 'Selected jobs', active = #s.access > 0 } }
+    hud.info = {}
+    if #s.access == 0 then
+        hud.info[1] = { label = 'Console', value = 'Open to every player' }
+    else
+        for i, rule in ipairs(s.access) do
+            if i > 6 then
+                hud.info[#hud.info + 1] = { label = 'And', value = ('%d more job%s'):format(#s.access - 6, #s.access - 6 == 1 and '' or 's') }
+                break
+            end
+            hud.info[#hud.info + 1] = { label = jobLabel(s, rule.job), value = gradeLabel(s, rule) }
+        end
+    end
+    hud.keys = {
+        { keys = { 'Enter' }, label = 'Next: review' },
+        { keys = { 'E' }, label = s.picking and 'Picking jobs…' or 'Choose jobs & grades' },
+    }
+    if #s.access > 0 then hud.keys[#hud.keys + 1] = { keys = { 'Backspace' }, label = 'Allow everyone' } end
+    if not s.jobs then hud.warning = 'Loading jobs…' end
+
+    if pressed(CTRL.place) and s.jobs then openAccessPicker(s) end
+    if pressed(CTRL.remove) then s.access = {} end
+    if pressed(CTRL.enter) then return 5 end
+end
+
+---The picker's Save / Cancel. Only jobs the server listed are kept (it validates again on save).
+RegisterNUICallback('creatorAccess', function(data, cb)
+    cb({})
+    local s = session
+    if not s or not s.picking then return end
+    SetNuiFocus(false, false)
+    s.picking = false
+    s.unmuteAt = GetGameTimer() + 300
+
+    if type(data) ~= 'table' or type(data.access) ~= 'table' then return end
+    local access, seen = {}, {}
+    for _, rule in ipairs(data.access) do
+        local job = type(rule) == 'table' and s.jobs.byName[rule.job]
+        if job and not seen[job.name] then
+            seen[job.name] = true
+            access[#access + 1] = { job = job.name, grade = math.floor(tonumber(rule.grade) or 0) }
+        end
+    end
+    s.access = access
+end)
+
+-- ─── step 5: review & save ─────────────────────────────────────────────────
 
 local function soundSummary(s)
     local a = s.audio
@@ -519,8 +689,7 @@ end
 local function stepSave(s, hud)
     local console = s.console.pos
     showConsole(s, s.console)
-    local ms = GetGameTimer()
-    DrawDjLights(s.lights, console, ms / 1000.0, DjBeatPhase(ms))
+    DrawDjLights(s.lights, console, DjPreviewBeats(GetGameTimer()))
     if s.audio.type == 'radius' then drawRing(console, s.audio.range, 80, 200, 255) end
     if s.audio.type == 'interior' and s.audio.muffled > 0.5 then drawRing(console, s.audio.muffled, 255, 190, 80) end
     if s.audio.type == 'area' then drawArea(s, nil) end
@@ -537,6 +706,7 @@ local function stepSave(s, hud)
         { label = 'Location', value = (describeSpot(console)) },
         { label = 'Sound', value = soundSummary(s) },
         { label = 'Disco lights', value = #s.lights == 0 and 'None' or ('%d light%s'):format(#s.lights, #s.lights == 1 and '' or 's') },
+        { label = 'Who can use it', value = accessSummary(s) },
     }
     hud.keys = { { keys = { 'Enter' }, label = s.station and 'Save changes' or 'Create booth' } }
     if pressed(CTRL.enter) then return 'save' end
@@ -558,6 +728,7 @@ local function buildSettings(s)
         zone = c.mode ~= 'prop' and c.zone or nil,
         audio = audio,
         lights = s.lights,
+        access = s.access,
     }
 end
 
@@ -609,6 +780,7 @@ local function run(s)
     while true do
         Wait(0)
         for _, c in ipairs(DISABLED) do DisableControlAction(0, c, true) end
+        muted = s.picking or GetGameTimer() < (s.unmuteAt or 0)
 
         local hud = {
             editing = s.station ~= nil,
@@ -621,9 +793,13 @@ local function run(s)
         }
 
         local nextStep
+        syncPreviews(s)
+        if s.step ~= 3 then deleteLightGhost(s) end
+
         if s.step == 1 then nextStep = stepConsole(s, hud)
         elseif s.step == 2 then nextStep = stepSound(s, hud)
         elseif s.step == 3 then nextStep = stepLights(s, hud)
+        elseif s.step == 4 then nextStep = stepAccess(s, hud)
         else nextStep = stepSave(s, hud) end
 
         if s.step > 1 then table.insert(hud.keys, { keys = { 'X' }, label = 'Back' }) end
@@ -647,8 +823,14 @@ local function run(s)
     end
 
     deleteGhost(s)
+    deleteLightGhost(s)
+    deletePreviews(s)
+    DjEditingStationId = nil
+    if s.picking then SetNuiFocus(false, false) end
+    SendNUIMessage({ action = 'creatorAccess', data = false })
     SendNUIMessage({ action = 'creator', data = false })
     session = nil
+    muted = false
 
     if result == 'save' then save(s) else ESX.ShowNotification(Config.Messages.placement_cancelled) end
 end
@@ -669,6 +851,12 @@ function StartDjCreator(station)
     end
     if #models == 0 then models[1] = { name = 'default', hash = Config.DjMixerModel } end
 
+    local fixtures = { { kind = 'glow', label = 'Glowing dot' }, { kind = 'none', label = 'Nothing, beam only' } }
+    for _, name in ipairs(Config.DiscoLights.fixtures or {}) do
+        local hash = GetHashKey(name)
+        if IsModelInCdimage(hash) then fixtures[#fixtures + 1] = { kind = 'prop', name = name, hash = hash, label = name } end
+    end
+
     local ped = PlayerPedId()
     session = {
         station = station,
@@ -686,13 +874,34 @@ function StartDjCreator(station)
         lightType = 1,
         colorIndex = 1,
         speed = 1.0,
+        fixtures = fixtures,
+        fixtureIndex = 1,
+        fixtureSpin = 0.0,
+        lightsRev = 0,
+        previewRev = -1,
+        previews = {},
+        access = copyList(station and station.settings and station.settings.access),
+        jobs = nil, -- { list, byName }, fetched below
+        picking = false,
         hudSent = '',
         hudAt = 0,
     }
-    CreateThread(function() run(session) end)
+    local s = session
+    -- lights.lua hides this booth's own fixture props while the creator shows its copies.
+    DjEditingStationId = station and station.id or nil
+    CreateThread(function()
+        local list = lib.callback.await('kariee_radio:dj:getJobs', false) or {}
+        local byName = {}
+        for _, job in ipairs(list) do byName[job.name] = job end
+        s.jobs = { list = list, byName = byName }
+    end)
+    CreateThread(function() run(s) end)
 end
 
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() or not session then return end
     deleteGhost(session)
+    deleteLightGhost(session)
+    deletePreviews(session)
+    if session.picking then SetNuiFocus(false, false) end
 end)

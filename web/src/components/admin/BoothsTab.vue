@@ -107,6 +107,9 @@ function soundLabel(s: AdminStation) {
             <span class="admin-pill" title="How players open the booth">{{ CONSOLE[s.setup?.mode ?? 'prop'] }}</span>
             <span class="admin-pill" title="Who hears it"><Icon name="volume-2" :size="11" /> {{ soundLabel(s) }}</span>
             <span v-if="s.setup?.lights" class="admin-pill accent"><Icon name="sparkles" :size="11" /> {{ s.setup.lights }} lights</span>
+            <span v-if="s.setup?.access?.length" class="admin-pill" :title="`Only usable by: ${s.setup.access.join(', ')}`">
+              <Icon name="lock" :size="11" /> {{ s.setup.access.length }} {{ s.setup.access.length === 1 ? 'job' : 'jobs' }}
+            </span>
           </span>
         </div>
 

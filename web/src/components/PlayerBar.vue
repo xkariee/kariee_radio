@@ -4,6 +4,7 @@ import { store } from '../store'
 import { settings } from '../settings'
 import Icon from './Icon.vue'
 import Cover from './Cover.vue'
+import LightSync from './LightSync.vue'
 
 const { state } = store
 const song = store.currentSong
@@ -26,6 +27,13 @@ function onSeekCommit(e: Event) {
 }
 
 const volume = computed(() => (state.muted ? 0 : state.volume))
+
+// Put the thumb back on the real value - a refused change (locked DJ booth) would leave it behind.
+function onVolumeInput(e: Event) {
+  const el = e.target as HTMLInputElement
+  store.setVolume(Number(el.value))
+  el.value = String(volume.value)
+}
 
 const volumeIcon = computed(() => {
   if (volume.value === 0) return 'volume-x'
@@ -210,6 +218,8 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
     </div>
 
     <div class="tools">
+      <LightSync v-if="store.lightSync.value" />
+
       <div class="sleep-wrap">
         <button
           ref="sleepBtn"
@@ -280,7 +290,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onOutside))
           :style="{ '--pct': pct(volume, 100) }"
           aria-label="Volume"
           :aria-valuetext="`${volume}%`"
-          @input="store.setVolume(Number(($event.target as HTMLInputElement).value))"
+          @input="onVolumeInput"
         />
         <span class="vol-num" aria-hidden="true">{{ volume }}</span>
       </div>

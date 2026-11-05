@@ -27,7 +27,7 @@ const swatch = (s: number[] | 'rainbow' | undefined) =>
         <span class="count">Step {{ hud.step }} of {{ hud.steps.length }}</span>
       </header>
 
-      <ol class="stepper">
+      <ol class="stepper" :style="{ gridTemplateColumns: `repeat(${hud.steps.length}, 1fr)` }">
         <li
           v-for="(s, i) in hud.steps"
           :key="s"
@@ -151,7 +151,6 @@ const swatch = (s: number[] | 'rainbow' | undefined) =>
 
 .stepper {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
   gap: 0.6rem;
   margin: 0;
   padding: 0 1.6rem;

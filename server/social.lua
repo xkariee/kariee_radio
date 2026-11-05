@@ -64,5 +64,8 @@ lib.callback.register('kariee_radio:getState', function(source, context)
         broadcast = GetBroadcastSnapshotFor(context),
         isAdmin = IsRadioAdmin(source),
         ban = SerializeRadioBan(GetRadioBan(source)),
+        -- Job-restricted booth this player can't run: the NUI opens for browsing but blocks playback.
+        djLocked = type(context) == 'table' and context.kind == 'dj'
+            and not CanUseDjStation(source, DjStations[tonumber(context.stationId)]) or false,
     }
 end)

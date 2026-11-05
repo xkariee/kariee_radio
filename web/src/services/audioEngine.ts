@@ -146,3 +146,13 @@ export function getCurrentTime(id: string): number {
   const entry = players.get(id)
   return entry?.ready ? entry.player.getCurrentTime() : 0
 }
+
+// Where the player actually is in the video (what this client hears right now), or null while
+// it's still being created / has nothing loaded.
+export function getPosition(id: string): { time: number; playing: boolean } | null {
+  const entry = players.get(id)
+  if (!entry?.ready || entry.pendingVideoId || typeof entry.player.getPlayerState !== 'function') return null
+  const s = entry.player.getPlayerState()
+  if (s === window.YT.PlayerState.UNSTARTED) return null
+  return { time: Number(entry.player.getCurrentTime()) || 0, playing: s === window.YT.PlayerState.PLAYING }
+}

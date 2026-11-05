@@ -93,6 +93,13 @@ export interface RadioBan {
 }
 
 // A broadcast somewhere on the server, as every client receives it (broadcastSync).
+// Beat grid for a DJ booth's disco lights, set by tapping along: `offset` is the song position
+// (seconds) of a downbeat, so it lines up for everyone no matter when they started listening.
+export interface Tempo {
+  bpm: number
+  offset: number
+}
+
 export interface LiveBroadcast {
   id: string
   kind: BroadcastKind
@@ -159,6 +166,8 @@ export interface AdminStation extends Located {
     muffled?: number
     areaPoints: number
     lights: number
+    // jobs allowed to use the console ("police (grade 2+)"); missing = everyone
+    access?: string[]
   }
 }
 
@@ -174,6 +183,23 @@ export interface CreatorHud {
   info: { label: string; value: string; swatch?: number[] | 'rainbow' }[]
   keys: { keys: string[]; label: string }[]
   warning?: string | null
+}
+
+// The creator's Access step: every ESX job, and which ones may use the console (grade = minimum).
+export interface JobInfo {
+  name: string
+  label: string
+  grades: { grade: number; label: string }[]
+}
+
+export interface DjAccessRule {
+  job: string
+  grade: number
+}
+
+export interface CreatorAccess {
+  jobs: JobInfo[]
+  access: DjAccessRule[]
 }
 
 export interface AdminBan {

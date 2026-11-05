@@ -17,6 +17,7 @@ const groups = [
       { keys: ['S'], label: 'Shuffle' },
       { keys: ['R'], label: 'Repeat: off, all, one' },
       { keys: ['L'], label: 'Like the current song' },
+      { keys: ['T'], label: 'Tap the beat for the disco lights (DJ booths)' },
     ],
   },
   {

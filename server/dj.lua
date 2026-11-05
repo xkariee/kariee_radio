@@ -54,6 +54,61 @@ end
 local LIGHT_TYPES = { spot = true, laser = true, ball = true, strobe = true }
 local COLOR_NAMES = {}
 for _, c in ipairs(Config.DiscoLights.colors) do COLOR_NAMES[c.name] = true end
+local FIXTURE_MODELS = {}
+for _, name in ipairs(Config.DiscoLights.fixtures or {}) do FIXTURE_MODELS[name] = true end
+local MAX_ACCESS_RULES = 30
+
+-- ─── Jobs (creator "Access" step) ──────────────────────────────────────────
+
+---Every ESX job with its grades, sorted by label: { name, label, grades = { { grade, label } } }.
+---Falls back to the jobs / job_grades tables on ESX builds without ESX.GetJobs.
+---@return table[]
+local function listJobs()
+    local raw = ESX.GetJobs and ESX.GetJobs() or nil
+    if type(raw) ~= 'table' or next(raw) == nil then
+        raw = {}
+        local okJobs, jobs = pcall(MySQL.query.await, 'SELECT name, label FROM jobs')
+        local okGrades, grades = pcall(MySQL.query.await, 'SELECT job_name, grade, label FROM job_grades')
+        for _, j in ipairs(okJobs and jobs or {}) do raw[j.name] = { name = j.name, label = j.label, grades = {} } end
+        for _, g in ipairs(okGrades and grades or {}) do
+            if raw[g.job_name] then raw[g.job_name].grades[#raw[g.job_name].grades + 1] = g end
+        end
+    end
+
+    local list = {}
+    for name, job in pairs(raw) do
+        local grades = {}
+        for _, g in pairs(job.grades or {}) do
+            local grade = tonumber(g.grade)
+            if grade then grades[#grades + 1] = { grade = grade, label = tostring(g.label or g.name or grade) } end
+        end
+        table.sort(grades, function(a, b) return a.grade < b.grade end)
+        list[#list + 1] = { name = job.name or name, label = tostring(job.label or name), grades = grades }
+    end
+    table.sort(list, function(a, b) return a.label:lower() < b.label:lower() end)
+    return list
+end
+
+---Job restriction from the creator: unknown jobs dropped, one rule per job. Empty = everyone.
+---@return table[]|nil { { job, grade } } (grade = minimum grade)
+local function sanitizeAccess(rules)
+    if type(rules) ~= 'table' then return nil end
+    local known = {}
+    for _, job in ipairs(listJobs()) do known[job.name] = true end
+    local checkNames = next(known) ~= nil -- no job list at all: keep anything that looks like a job name
+
+    local out, seen = {}, {}
+    for _, rule in ipairs(rules) do
+        if #out >= MAX_ACCESS_RULES then break end
+        local name = type(rule) == 'table' and type(rule.job) == 'string' and rule.job or nil
+        local valid = name and (checkNames and known[name] or (not checkNames and name:match('^[%w_%-]+$')))
+        if valid and not seen[name] then
+            seen[name] = true
+            out[#out + 1] = { job = name, grade = math.floor(num(rule.grade, 0, 1000, 0)) }
+        end
+    end
+    return #out > 0 and out or nil
+end
 
 ---@param s table|nil raw settings from the client
 ---@param pos table station position { x, y, z }
@@ -111,6 +166,24 @@ local function sanitizeSettings(s, pos)
     for i, l in ipairs(type(s.lights) == 'table' and s.lights or {}) do
         if i > Config.DiscoLights.maxPerBooth then break end
         if type(l) == 'table' and LIGHT_TYPES[l.type] and near2d(tonumber(l.x), tonumber(l.y), pos, 60.0) then
+            -- What marks the light: the glowing dot, nothing, or a prop from Config.DiscoLights.fixtures.
+            local fixture = (l.fixture == 'none' or l.fixture == 'prop') and l.fixture or 'glow'
+            local prop
+            if fixture == 'prop' then
+                local p = type(l.prop) == 'table' and l.prop or {}
+                if FIXTURE_MODELS[p.model] and near2d(tonumber(p.x), tonumber(p.y), pos, 60.0) then
+                    prop = {
+                        model = p.model,
+                        x = tonumber(p.x) + 0.0,
+                        y = tonumber(p.y) + 0.0,
+                        z = num(p.z, pos.z - 20.0, pos.z + 40.0, pos.z),
+                        h = num(p.h, -360.0, 360.0, 0.0),
+                        flip = p.flip == true,
+                    }
+                else
+                    fixture = 'glow'
+                end
+            end
             lights[#lights + 1] = {
                 type = l.type,
                 x = tonumber(l.x) + 0.0,
@@ -118,10 +191,13 @@ local function sanitizeSettings(s, pos)
                 z = num(l.z, pos.z - 20.0, pos.z + 40.0, pos.z + 3.0),
                 color = COLOR_NAMES[l.color] and l.color or 'Rainbow',
                 speed = num(l.speed, 0.25, 3.0, 1.0),
+                fixture = fixture,
+                prop = prop,
             }
         end
     end
     out.lights = lights
+    out.access = sanitizeAccess(s.access)
 
     return out
 end
@@ -130,6 +206,13 @@ end
 function SummarizeDjSetup(station)
     local s = station.settings or {}
     local audio = s.audio or {}
+    local access
+    if s.access then
+        access = {}
+        for i, rule in ipairs(s.access) do
+            access[i] = rule.grade > 0 and ('%s (grade %d+)'):format(rule.job, rule.grade) or rule.job
+        end
+    end
     return {
         mode = s.mode or 'prop',
         audio = audio.type or 'auto',
@@ -137,6 +220,7 @@ function SummarizeDjSetup(station)
         muffled = audio.muffled,
         areaPoints = audio.points and #audio.points or 0,
         lights = s.lights and #s.lights or 0,
+        access = access,
     }
 end
 
@@ -145,10 +229,35 @@ local function canManage(source, station)
     return identifier and (station.owner_identifier == identifier or hasDjPermission(source) or IsRadioAdmin(source))
 end
 
+---Can this player use the booth's console (play, pause, queue...)? Booths without job rules are
+---open to everyone; radio admins always can.
+---@param source number
+---@param station table|nil
+---@return boolean
+function CanUseDjStation(source, station)
+    if not station then return false end
+    local access = station.settings and station.settings.access
+    if not access or #access == 0 then return true end
+    if IsRadioAdmin(source) then return true end
+
+    local xPlayer = ESX.GetPlayerFromId(source)
+    local job = xPlayer and (xPlayer.getJob and xPlayer.getJob() or xPlayer.job)
+    if not job then return false end
+    local grade = tonumber(job.grade) or 0
+    for _, rule in ipairs(access) do
+        if rule.job == job.name and grade >= rule.grade then return true end
+    end
+    return false
+end
+
 -- ─── Callbacks ─────────────────────────────────────────────────────────────
 
 lib.callback.register('kariee_radio:dj:getAll', function(_source)
     return DjStations
+end)
+
+lib.callback.register('kariee_radio:dj:getJobs', function(_source)
+    return listJobs()
 end)
 
 lib.callback.register('kariee_radio:dj:create', function(source, pos, heading, label, settings)

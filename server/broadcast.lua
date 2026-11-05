@@ -3,8 +3,8 @@
 -- how loud (if at all) it should hear each one - see client/broadcast.lua.
 --
 -- /radio is single-user (only its owner can control it, no shared queue). DJ stations and car
--- radios are collaborative: anyone who can legitimately reach them (proximity-gated client-side
--- via ox_target/commands for DJ, "actually inside the vehicle" for cars) can change the current
+-- radios are collaborative: anyone who can legitimately reach them (standing at the booth for DJ,
+-- "actually inside the vehicle" for cars - both re-checked here) can change the current
 -- song or add to a shared queue, and everyone watching that same broadcast sees the same thing.
 
 ---@type table<string, table>
@@ -22,6 +22,24 @@ local function elapsedSeconds(b)
     return b.progressAt + (GetGameTimer() - b.updatedAt) / 1000.0
 end
 BroadcastProgress = elapsedSeconds
+
+-- Disco light beat grid a DJ tapped in for a song: { bpm, offset }, offset being the song
+-- position (seconds) of a downbeat. Kept per video in the resource KVP store, so that song is in
+-- sync again the next time anyone plays it, at any booth, even after a restart.
+local function tempoKey(videoId)
+    return ('tempo:%s'):format(videoId)
+end
+
+local function savedTempo(videoId)
+    if not videoId or videoId == '' then return nil end
+    local raw = GetResourceKvpString(tempoKey(videoId))
+    if not raw then return nil end
+    local ok, t = pcall(json.decode, raw)
+    if ok and type(t) == 'table' and tonumber(t.bpm) and tonumber(t.offset) then
+        return { bpm = tonumber(t.bpm), offset = tonumber(t.offset) }
+    end
+    return nil
+end
 
 ---Display name for a broadcast - the booth's label for DJ stations (shown in the nearby
 ---now-playing widget and the admin panel).
@@ -51,6 +69,7 @@ function SyncBroadcasts()
             volume = b.volume,
             playing = b.playing,
             progress = elapsedSeconds(b),
+            tempo = b.tempo,
         }
     end
     TriggerClientEvent('kariee_radio:broadcast:sync', -1, payload)
@@ -71,6 +90,7 @@ function GetBroadcastSnapshotFor(context)
         volume = b.volume,
         playing = b.playing,
         progress = elapsedSeconds(b),
+        tempo = b.tempo,
     }
 end
 
@@ -81,9 +101,18 @@ local function isOccupantOf(source, vehicleNetId)
     return GetVehiclePedIsIn(ped, false) == vehicle
 end
 
----Personal radio stays single-user; DJ stations and car radios are collaborative - anyone who
----got hold of the id through the normal, proximity-gated flow (ox_target/commands) may control
----them, except car radios still require actually being inside that specific vehicle right now.
+---DJ booths are only run from the booth itself: whoever changes its music has to be standing at
+---it right now, not just have opened it at some point.
+local function isAtStation(source, station)
+    local ped = GetPlayerPed(source)
+    if not ped or ped == 0 then return false end
+    local pos = vector3(station.pos_x, station.pos_y, station.pos_z)
+    return #(GetEntityCoords(ped) - pos) <= (Config.Placement.controlRange or 25.0)
+end
+
+---Personal radio stays single-user; DJ stations and car radios are collaborative - anyone at the
+---booth (and with the job, on job-restricted ones) or inside that specific vehicle right now may
+---control them.
 local function canControl(source, id)
     local b = ActiveBroadcasts[id]
     if not b then return false end
@@ -93,7 +122,10 @@ local function canControl(source, id)
         return false
     end
     if b.kind == 'radio' then return b.owner == source end
-    if b.kind == 'dj' then return true end
+    if b.kind == 'dj' then
+        local station = DjStations[b.stationId]
+        return station ~= nil and isAtStation(source, station) and CanUseDjStation(source, station)
+    end
     if b.kind == 'radiocar' then return isOccupantOf(source, b.vehicleNetId) end
     return false
 end
@@ -122,6 +154,7 @@ advanceQueue = function(id, b)
         syncAll()
         return
     end
+    if b.kind == 'dj' then b.tempo = savedTempo(b.song.videoId) end
     b.progressAt = 0
     b.updatedAt = GetGameTimer()
     b.gen = b.gen + 1
@@ -144,7 +177,11 @@ RegisterNetEvent('kariee_radio:broadcast:play', function(kind, ctxId, song, volu
     if type(song) ~= 'table' or not song.videoId then return end
 
     if kind == 'dj' then
-        if not DjStations[ctxId] then return end
+        if not DjStations[ctxId] or not isAtStation(source, DjStations[ctxId]) then return end
+        if not CanUseDjStation(source, DjStations[ctxId]) then
+            TriggerClientEvent('kariee_radio:notify', source, Config.Messages.dj_no_access)
+            return
+        end
     elseif kind == 'radiocar' then
         if not isOccupantOf(source, ctxId) then return end
     elseif kind ~= 'radio' then
@@ -177,6 +214,7 @@ RegisterNetEvent('kariee_radio:broadcast:play', function(kind, ctxId, song, volu
         startedAt = os.time(),
         gen = gen,
     }
+    if kind == 'dj' then ActiveBroadcasts[id].tempo = savedTempo(ActiveBroadcasts[id].song.videoId) end
 
     local identifier = GetIdentifier(source)
     if identifier then RecordRecentlyPlayed(identifier, song) end
@@ -192,20 +230,48 @@ RegisterNetEvent('kariee_radio:broadcast:play', function(kind, ctxId, song, volu
     scheduleEnd(id, gen, ActiveBroadcasts[id].song.duration)
 end)
 
-RegisterNetEvent('kariee_radio:broadcast:togglePlay', function(id)
-    local source = source
-    if not canControl(source, id) then return end
-    local b = ActiveBroadcasts[id]
-    if b.playing then
-        b.progressAt = elapsedSeconds(b)
-        b.playing = false
-    else
+---Pauses / resumes a broadcast, keeping its clock and end-of-song timer right.
+local function setPlaying(id, b, playing)
+    if playing then
         b.playing = true
         b.updatedAt = GetGameTimer()
         b.gen = b.gen + 1
         scheduleEnd(id, b.gen, b.song.duration - b.progressAt)
+    else
+        b.progressAt = elapsedSeconds(b)
+        b.playing = false
     end
     b.updatedAt = GetGameTimer()
+end
+
+RegisterNetEvent('kariee_radio:broadcast:togglePlay', function(id)
+    local source = source
+    if not canControl(source, id) then return end
+    local b = ActiveBroadcasts[id]
+    b.pausedIndoors = nil
+    setPlaying(id, b, not b.playing)
+    syncAll()
+end)
+
+-- The personal radio isn't allowed inside interiors: one started outside pauses when its owner
+-- walks in and picks up again when they step back out (client/broadcast.lua reports it). Only the
+-- sender's own radio, so there's nothing here worth abusing.
+RegisterNetEvent('kariee_radio:broadcast:indoors', function(indoors)
+    local source = source
+    local id = buildId('radio', nil, source)
+    local b = ActiveBroadcasts[id]
+    if not b then return end
+    if indoors == true then
+        if not b.playing then return end
+        setPlaying(id, b, false)
+        b.pausedIndoors = true
+    elseif b.pausedIndoors then
+        b.pausedIndoors = nil
+        if b.playing then return end
+        setPlaying(id, b, true)
+    else
+        return
+    end
     syncAll()
 end)
 
@@ -217,6 +283,26 @@ RegisterNetEvent('kariee_radio:broadcast:seek', function(id, seconds)
     b.updatedAt = GetGameTimer()
     b.gen = b.gen + 1
     if b.playing then scheduleEnd(id, b.gen, b.song.duration - b.progressAt) end
+    syncAll()
+end)
+
+-- Tap tempo from the NUI (DJ booths only - that's where the lights are). No bpm clears it.
+RegisterNetEvent('kariee_radio:broadcast:setTempo', function(id, bpm, offset)
+    local source = source
+    if not canControl(source, id) then return end
+    local b = ActiveBroadcasts[id]
+    local videoId = b.song and b.song.videoId
+    if b.kind ~= 'dj' or not videoId or videoId == '' then return end
+
+    bpm, offset = tonumber(bpm), tonumber(offset)
+    if bpm and offset and bpm >= 60 and bpm <= 200 then
+        -- Any downbeat will do; keep the first one in the song so the number stays small.
+        b.tempo = { bpm = bpm, offset = offset % (4 * 60.0 / bpm) }
+        SetResourceKvp(tempoKey(videoId), json.encode(b.tempo))
+    else
+        b.tempo = nil
+        DeleteResourceKvp(tempoKey(videoId))
+    end
     syncAll()
 end)
 

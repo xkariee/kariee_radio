@@ -25,25 +25,23 @@ function LoadModel(model, timeoutMs)
     return true
 end
 
----Bound to whichever command opened the NUI. `id` is the ActiveBroadcasts key on the server.
----@type table
-ActiveContext = { kind = 'radio', id = ('radio:%s'):format(GetPlayerServerId(PlayerId())) }
-
----The context the NUI is open with right now - nil when only the admin panel is open (e.g. an
----admin used /radioadmin inside an interior, where the personal radio isn't allowed).
+---Bound to whichever command last opened the NUI; every control goes to it. `id` is the
+---ActiveBroadcasts key on the server. nil when it was opened with no radio bound (inside an
+---interior, where the personal radio isn't allowed) - then nothing can be changed, and a DJ
+---booth / car radio used earlier is never controlled from somewhere else.
 ---@type table|nil
-OpenContext = nil
+ActiveContext = nil
 
 ---Opens the radio NUI bound to the given context (called below, and by client/dj.lua and
 ---client/admin.lua).
 ---@param context table|nil { kind = 'radio'|'dj'|'radiocar', id = string, stationId?, vehicleNetId? }
 ---@param view string|nil view to land on ('admin' for /radioadmin)
-function OpenRadio(context, view)
-    if context then ActiveContext = context end
-    OpenContext = context
+---@param blocked string|nil with no context: the notice shown when the player tries to play
+function OpenRadio(context, view, blocked)
+    ActiveContext = context
     nuiOpen = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ action = 'open', context = context, view = view })
+    SendNUIMessage({ action = 'open', context = context, view = view, blocked = blocked })
 end
 
 function CloseRadio()
@@ -87,12 +85,10 @@ local function toggleRadio()
         return
     end
 
+    -- Indoors there's no radio to bind to: the panel still opens (playlists, search, settings),
+    -- but anything that would play music is cancelled with this notice - same as /radioadmin.
     local context, reason = ResolveRadioContext()
-    if not context then
-        ESX.ShowNotification(Config.Messages[reason])
-        return
-    end
-    OpenRadio(context)
+    OpenRadio(context, nil, reason and Config.Messages[reason])
 end
 
 RegisterKeyMapping('kradio', 'Open/close the radio', 'keyboard', Config.OpenKey)
@@ -113,7 +109,7 @@ RegisterNUICallback('close', function(_, cb)
     cb({})
 end)
 
-RegisterNUICallback('getState', cbHandler('kariee_radio:getState', function(_) return { OpenContext } end))
+RegisterNUICallback('getState', cbHandler('kariee_radio:getState', function(_) return { ActiveContext } end))
 
 -- Static settings the NUI asks for once on load (it can't read config.lua itself).
 RegisterNUICallback('getConfig', function(_, cb)
@@ -121,6 +117,7 @@ RegisterNUICallback('getConfig', function(_, cb)
         widget = Config.NowPlayingWidget ~= false,
         widgetCommand = Config.WidgetCommand,
         serverId = GetPlayerServerId(PlayerId()),
+        lights = Config.DiscoLights.enabled == true,
     })
 end)
 RegisterNUICallback('createPlaylist', cbHandler('kariee_radio:createPlaylist', function(d) return { d.name, d.cover } end))
@@ -138,53 +135,68 @@ RegisterNUICallback('searchPlayers', cbHandler('kariee_radio:searchPlayers', fun
 
 -- ─── Playback (fire-and-forget, synced back via kariee_radio:broadcast:sync) ──
 
+---Sends a control to the broadcast the panel is bound to - dropped when it isn't bound to any
+---(opened inside an interior).
+local function control(event, ...)
+    if not ActiveContext then return end
+    TriggerServerEvent(event, ActiveContext.id, ...)
+end
+
 RegisterNUICallback('play', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:play', ActiveContext.kind, ActiveContext.stationId or ActiveContext.vehicleNetId, data.song, data.volume, data.queue)
+    if ActiveContext then
+        TriggerServerEvent('kariee_radio:broadcast:play', ActiveContext.kind, ActiveContext.stationId or ActiveContext.vehicleNetId, data.song, data.volume, data.queue)
+    end
     cb({})
 end)
 
 RegisterNUICallback('togglePlay', function(_, cb)
-    TriggerServerEvent('kariee_radio:broadcast:togglePlay', ActiveContext.id)
+    control('kariee_radio:broadcast:togglePlay')
     cb({})
 end)
 
 RegisterNUICallback('seek', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:seek', ActiveContext.id, data.seconds)
+    control('kariee_radio:broadcast:seek', data.seconds)
+    cb({})
+end)
+
+-- Disco light beat grid (DJ booths) from the tap-tempo control; no bpm = back to the default.
+RegisterNUICallback('setTempo', function(data, cb)
+    control('kariee_radio:broadcast:setTempo', data.bpm, data.offset)
     cb({})
 end)
 
 RegisterNUICallback('setVolume', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:setVolume', ActiveContext.id, data.volume)
+    control('kariee_radio:broadcast:setVolume', data.volume)
     cb({})
 end)
 
 RegisterNUICallback('stop', function(_, cb)
-    TriggerServerEvent('kariee_radio:broadcast:stop', ActiveContext.id)
+    control('kariee_radio:broadcast:stop')
     cb({})
 end)
 
 RegisterNUICallback('next', function(_, cb)
-    TriggerServerEvent('kariee_radio:broadcast:next', ActiveContext.id)
+    control('kariee_radio:broadcast:next')
     cb({})
 end)
 
 RegisterNUICallback('enqueue', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:enqueue', ActiveContext.id, data.song)
+    control('kariee_radio:broadcast:enqueue', data.song)
     cb({})
 end)
 
 RegisterNUICallback('enqueueNext', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:enqueueNext', ActiveContext.id, data.song)
+    control('kariee_radio:broadcast:enqueueNext', data.song)
     cb({})
 end)
 
 RegisterNUICallback('removeFromQueue', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:removeFromQueue', ActiveContext.id, data.index)
+    control('kariee_radio:broadcast:removeFromQueue', data.index)
     cb({})
 end)
 
 RegisterNUICallback('setQueue', function(data, cb)
-    TriggerServerEvent('kariee_radio:broadcast:setQueue', ActiveContext.id, data.queue)
+    control('kariee_radio:broadcast:setQueue', data.queue)
     cb({})
 end)
 
